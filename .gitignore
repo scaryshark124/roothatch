@@ -1,0 +1,46 @@
+# Compiled outputs and local tooling
+/bin/
+/dist/
+/coverage/
+/.cache/
+/.local/
+/.hermes/
+*.test
+coverage.out
+
+# Never publish target operating systems, VM state, or machine data
+/workspaces/
+/rootfs/
+/images/
+/artifacts/
+/evidence/raw/
+*.qcow2
+*.qcow
+*.raw
+*.img
+*.iso
+*.vdi
+*.vmdk
+*.vhd
+*.vhdx
+*.fd
+*.vars
+*efivars*
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*.sock
+*.pid
+
+# Credentials and machine-local configuration
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+id_rsa*
+id_ed25519*
+.DS_Store
