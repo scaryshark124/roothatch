@@ -1,9 +1,11 @@
 # Roothatch master checklist
 
-Current position: **M0 IN_PROGRESS — scaffold verified; initial public publication authorized under RH-D004 and being verified.**
+Current position: **M0 COMPLETE — project foundation publicly published and verified; M1 onward is not implemented.**
 Completed foundation rows are backed by the historical
-[RH-000 receipt](docs/development/receipts/RH-000-BOOTSTRAP.md) and subsequent
-[RH-002/003 setup receipt](docs/development/receipts/RH-002-003-SETUP.md).
+[RH-000 receipt](docs/development/receipts/RH-000-BOOTSTRAP.md), subsequent
+[RH-002/003 setup receipt](docs/development/receipts/RH-002-003-SETUP.md), and
+[verified initial publication](docs/development/receipts/RH-002-PUBLICATION.md).
+M0 completion is not a boot/repair-capable release.
 See [current state](docs/development/CURRENT_STATE.md) for the next action.
 
 This is the requirement inventory, not a percentage score. Check a row only with
@@ -20,8 +22,8 @@ boot workflow; a shell-only demo is not that release.
 - [x] **RH-M0-03** Runnable nonprivileged help/version CLI. Owner: parent bootstrap. Proof: attributable RED, unit/race tests, gofmt/vet/build and actual binary exit/output checks.
 - [x] **RH-M0-04** Dedicated native project/board and held follow-up cards. Owner: parent. Proof: exact board/project/workspace, no accidental worker runs, notification routing.
 - [x] **RH-M0-05** Three worker roles bound to Roothatch. Owner: parent. Proof: approved instructions, root/nested native loading and invalidation/reload, unchanged model/account/tool configurations. Component loading is verified; no live worker run or future model-compliance claim.
-- [ ] **RH-M0-06** Public repository URL, final Go module path, chosen license and initial committed baseline. Owner: owner/parent. URL/module/origin and canonical Apache-2.0 are verified under RH-D003; initial commit remains pending, so this aggregate stays open.
-- [ ] **RH-M0-07** Initial public delivery and hosted CI. Owner: parent/review. Proof: remote readback and actual CI result; a workflow file is not CI execution.
+- [x] **RH-M0-06** Public repository URL, final Go module path, Apache-2.0 license and committed baseline. Owner: owner/parent. Proof: RH-D003/RH-D004, initial commit 7716893bc28e6d1af0023f923fbf21b7e9d021df and GitHub identity/license readback.
+- [x] **RH-M0-07** Initial public delivery and hosted CI. Owner: parent. Proof: exact remote SHA, independent fresh-clone tests/build and successful hosted Go foundation run 39958969567. Parent bootstrap review; no independent product/security verdict claimed.
 
 ## M1 — Target and edit-to-boot design
 

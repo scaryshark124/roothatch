@@ -20,20 +20,24 @@ Owner selected Apache-2.0 and created https://github.com/scaryshark124/roothatch
 Canonical LICENSE and NOTICE are included; module/imports and local HTTPS origin
 match the repository. License and repository choices are resolved, not pending.
 
+M0 project foundation is COMPLETE: the initial source commit
+`7716893bc28e6d1af0023f923fbf21b7e9d021df` is public on `main`, GitHub recognizes
+Apache-2.0, both commit identities map to `scaryshark124`, fresh-clone verification
+passed, and hosted Go foundation run `39958969567` succeeded. See the
+[publication receipt](receipts/RH-002-PUBLICATION.md) for exact proof and limits.
+
 Only nonprivileged help/version is implemented. Native entry, doctor, bootstrap,
-storage and VM functionality are not delivered. M0 remains IN_PROGRESS because
-initial commit, source publication and hosted CI remain open. No product milestone
-is complete merely because setup is complete.
+storage and VM functionality are not delivered. M1 onward remains unfinished;
+completion of M0 is not a product release or privileged-runtime qualification.
 
 ## Next action and remaining boundaries
 
-RH-D004 authorizes RH-002 initial public source delivery using `scaryshark124`
-and `158119705+scaryshark124@users.noreply.github.com` as both author and committer.
-Parent is executing exact staging/commit/push, remote readback, fresh-clone checks
-and hosted CI. Authority is settled; do not request identity/publication again.
-Completion requires actual proof, with the publication receipt recording resulting
-commit and CI identities. No successful push or hosted CI is claimed by this
-prepublication checkpoint.
+RH-D004's initial publication and privacy-safe author identity are fulfilled.
+Do not request the license, repository URL or initial publication approval again.
+The containing documentation-closure commit records observed initial publication
+without changing executable source. The parent verifies its remote readback and
+its own hosted CI before closing RH-002; those final identities are retained in
+the external publication receipt, avoiding a self-referential commit hash.
 
 RH-001 remains held for the bounded target/workspace and edit-to-boot design;
 retain real VM integration in the first release. No automatic worker assignment,
