@@ -35,6 +35,14 @@
   ET_REL, ET_NONE or ET_CORE) is `interp_elf_invalid` at the PT_INTERP path,
   naming the type. Malformed headers and unsupported architectures keep their
   earlier findings. Program headers are still not inspected.
+- `check` now reports `shell_not_executable` at `/bin/sh` when the resolved
+  regular shell is a valid ELF64 little-endian x86-64 file but its mode has no
+  owner, group or other execute bit. This reads mode bits only; it is not a
+  check of whether any user can run it. The finding does not stop the check: a
+  static shell is still recognized, and a dynamic shell's interpreter checks
+  still run and report after it. Earlier shell failures keep their single
+  finding, and an unreadable shell is still `read_error`. The interpreter's
+  permission bits are not checked.
 - Added `roothatch check --json <dir>`: the same report as one JSON document
   (`schema_version` 1, `result` `pass`/`findings`, `findings` of
   `code`/`path`/`detail`, `[]` when empty), with unchanged exit codes. Usage

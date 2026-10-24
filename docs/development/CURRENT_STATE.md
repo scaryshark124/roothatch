@@ -89,6 +89,16 @@ review (round 1 PASS) and parent comparison of the previous and new binaries on
 the same 86 synthetic fixtures, where only the four type-rejection
 fixtures changed; see the [RH-M09 receipt](receipts/RH-M09-INTERP-TYPE.md).
 
+RH-M10 reports a `/bin/sh` with no execute permission bits: after the shell
+resolves inside the root to a regular file and passes the ELF checks, a mode with
+no owner, group or other execute bit reports `shell_not_executable` at `/bin/sh`.
+The scan continues, so a dynamic shell's interpreter checks still run. This is a
+mode-bit diagnostic only, not an ACL, ownership, `noexec` or effective-access
+check. Proof: independent functional review (round 1 PASS) and parent comparison
+of the previous and new binaries on the same 92 synthetic fixtures,
+where only the three non-executable-shell fixtures changed; see the
+[RH-M10 receipt](receipts/RH-M10-SHELL-EXEC.md).
+
 Implemented commands are `help`, `version` and `check` (with `--json`). Native entry, doctor,
 bootstrap, storage and VM functionality are not delivered. RH-M2-01 stays
 unchecked: `check` covers its synthetic-root diagnostics, but the row remains open

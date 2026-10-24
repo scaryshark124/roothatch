@@ -110,6 +110,11 @@ type Entry struct {
 	Kind   Kind
 	Data   []byte
 	Target string // symlink target, written literally
+	// Mode, when non-nil, is the exact permission mode Build applies with a
+	// checked chmod to the regular file it has just written (creation modes
+	// are umask-filtered). nil keeps the default creation mode; a pointer to
+	// zero means mode 000. It is valid only for KindFile entries.
+	Mode *os.FileMode
 }
 
 // File, Dir, Link and FIFO construct entries.
@@ -118,10 +123,22 @@ func Dir(p string) Entry               { return Entry{Path: p, Kind: KindDir} }
 func Link(p, target string) Entry      { return Entry{Path: p, Kind: KindLink, Target: target} }
 func FIFO(p string) Entry              { return Entry{Path: p, Kind: KindFIFO} }
 
+// FileMode is File with an explicit permission mode applied after writing.
+func FileMode(p string, data []byte, mode os.FileMode) Entry {
+	e := File(p, data)
+	e.Mode = &mode
+	return e
+}
+
 // Build creates entries beneath root, creating real parent directories as
 // needed. Parents must not traverse symlinks created by earlier entries.
+// An explicit Mode is applied only to the regular file an entry has just
+// written; it is an error on any other kind.
 func Build(root string, entries ...Entry) error {
 	for _, e := range entries {
+		if e.Mode != nil && e.Kind != KindFile {
+			return fmt.Errorf("%s: Mode is only valid for regular file entries", e.Path)
+		}
 		p := filepath.Join(root, filepath.FromSlash(e.Path))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return err
@@ -130,6 +147,9 @@ func Build(root string, entries ...Entry) error {
 		switch e.Kind {
 		case KindFile:
 			err = os.WriteFile(p, e.Data, 0o755)
+			if err == nil && e.Mode != nil {
+				err = chmodWritten(p, *e.Mode)
+			}
 		case KindDir:
 			err = os.MkdirAll(p, 0o755)
 		case KindLink:
@@ -142,6 +162,25 @@ func Build(root string, entries ...Entry) error {
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// chmodWritten sets the permission mode of the regular file just written at
+// p, refusing anything that is not (no longer) a regular file there.
+func chmodWritten(p string, mode os.FileMode) error {
+	if mode&^fs.ModePerm != 0 {
+		return fmt.Errorf("%s: mode %v has non-permission bits", p, mode)
+	}
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s: not a regular file; mode not applied", p)
+	}
+	if err := os.Chmod(p, mode); err != nil {
+		return fmt.Errorf("%s: chmod %04o: %w", p, mode, err)
 	}
 	return nil
 }
@@ -222,6 +261,11 @@ const SandboxToken = "@SANDBOX@"
 func BuildFixture(sandbox string, fx Fixture) (string, error) {
 	if !filepath.IsAbs(sandbox) {
 		return "", fmt.Errorf("sandbox %q is not absolute", sandbox)
+	}
+	for _, e := range fx.Outside {
+		if e.Mode != nil {
+			return "", fmt.Errorf("outside sentinel %s: Mode is not allowed", e.Path)
+		}
 	}
 	if err := Build(sandbox, fx.Outside...); err != nil {
 		return "", err
@@ -332,7 +376,7 @@ func Catalog() []Fixture {
 		{Name: "dir_link_trailing_slash", Entries: []Entry{
 			Link("bin", "usr/bin/"), Link("lib64", "usr/lib64/"), Dir("usr/bin"), Dir("usr/lib64"), shell(), loaderFile(),
 		}},
-	}), append(append(bootCatalog(), InterpCatalog()...), InterpTypeCatalog()...)...)
+	}), append(append(append(bootCatalog(), InterpCatalog()...), InterpTypeCatalog()...), ShellExecCatalog()...)...)
 }
 
 // LargeLoaderSize is the size of the interp_large_valid_header loader, well

@@ -21,7 +21,10 @@ It checks only that /bin/sh resolves inside <dir>, is an ELF64 little-endian
 x86-64 file, and that its ELF interpreter (PT_INTERP) resolves inside <dir> to
 a regular file whose ELF header declares ELF64 little-endian x86-64 and an
 executable or shared-object type (ET_EXEC or ET_DYN). That is a header-level
-check only; the loader is never run or otherwise validated.
+check only; the loader is never run or otherwise validated. A valid /bin/sh
+whose resolved regular file has no owner, group or other execute permission bit
+is reported as shell_not_executable (mode bits only; not a check of whether any
+user can run it); its interpreter is still checked.
 Independently it applies Debian naming-convention consistency checks to the
 in-tree <dir>/boot: at least one /boot/vmlinuz-<version> regular file, and a
 matching /boot/initrd.img-<version> regular file for every such kernel; the

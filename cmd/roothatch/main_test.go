@@ -685,3 +685,134 @@ func TestBinaryInterpUnreadable(t *testing.T) {
 		t.Errorf("manifest changed (%v):\nbefore:\n%s\nafter:\n%s", err, before, after)
 	}
 }
+
+// shellNoExecDetail is the exact shell_not_executable detail for mode.
+func shellNoExecDetail(mode string) string {
+	return "resolves to a regular file with mode " + mode +
+		"; no owner, group or other execute bit is set (mode bits only; not a check of whether any user can run it)"
+}
+
+// TestBinaryShellExec runs the compiled binary in text and --json modes on
+// every shell permission-bit fixture: exact ordered (code, path) findings,
+// exact details, exit, empty stderr, JSON equal to the text finding block,
+// and an unchanged whole-sandbox manifest that records the shell's mode.
+func TestBinaryShellExec(t *testing.T) {
+	bin := buildBinary(t)
+	missing := "/usr/lib64/ld-linux-x86-64.so.2 does not exist inside the root"
+	details := map[string][]string{
+		"shell_noexec_dynamic":        {shellNoExecDetail("0644")},
+		"shell_noexec_static":         {shellNoExecDetail("0644")},
+		"shell_noexec_missing_interp": {shellNoExecDetail("0644"), missing},
+		"shell_exec_owner_only":       nil,
+		"shell_exec_group_only":       nil,
+		"shell_exec_other_only":       nil,
+	}
+	inCatalog := map[string]bool{}
+	for _, fx := range pt.Catalog() {
+		inCatalog[fx.Name] = true
+	}
+	fxs := pt.ShellExecCatalog()
+	if len(fxs) != len(details) {
+		t.Fatalf("got %d fixtures; want %d", len(fxs), len(details))
+	}
+	for _, fx := range fxs {
+		want, ok := details[fx.Name]
+		if !ok || !inCatalog[fx.Name] {
+			t.Fatalf("fixture %s: pinned %v, in Catalog() %v", fx.Name, ok, inCatalog[fx.Name])
+		}
+		var shellMode *os.FileMode
+		for _, e := range fx.Entries {
+			if e.Path == "usr/bin/sh" {
+				shellMode = e.Mode
+			}
+		}
+		if shellMode == nil {
+			t.Fatalf("fixture %s: shell has no explicit mode", fx.Name)
+		}
+		t.Run(fx.Name, func(t *testing.T) {
+			sandbox := t.TempDir()
+			root, err := pt.BuildFixture(sandbox, fx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := pt.Digest(sandbox)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if line := "\nroot/usr/bin/sh " + shellMode.String() + " sha256="; !strings.Contains("\n"+before, line) {
+				t.Fatalf("manifest lacks shell mode line %q:\n%s", line, before)
+			}
+			got := runBothModes(t, bin, root, fx.Findings)
+			gotD := []string{}
+			for _, f := range got {
+				gotD = append(gotD, f.Detail)
+			}
+			if !reflect.DeepEqual(gotD, append([]string{}, want...)) {
+				t.Errorf("details = %q; want %q", gotD, want)
+			}
+			if after, err := pt.Digest(sandbox); err != nil || after != before {
+				t.Errorf("manifest changed (%v):\nbefore:\n%s\nafter:\n%s", err, before, after)
+			}
+			// Also snapshot around each single invocation.
+			for _, args := range [][]string{{"check", root}, {"check", "--json", root}} {
+				runBinary(t, bin, args...)
+				if after, err := pt.Digest(sandbox); err != nil || after != before {
+					t.Errorf("%q: manifest changed (%v):\nbefore:\n%s\nafter:\n%s", args, err, before, after)
+				}
+			}
+		})
+	}
+}
+
+// TestBinaryShellUnreadable makes the regular shell mode 000: for a
+// nonprivileged runner both modes still report exactly read_error at
+// /bin/sh with no permission finding, and the sandbox (including the
+// shell's lstat metadata) is unchanged.
+func TestBinaryShellUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not deny root")
+	}
+	bin := buildBinary(t)
+	var fx pt.Fixture
+	for _, f := range pt.Catalog() {
+		if f.Name == "healthy_merged_usr" {
+			fx = f
+		}
+	}
+	sandbox := t.TempDir()
+	root, err := pt.BuildFixture(sandbox, fx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := filepath.Join(root, "usr/bin/sh")
+	before, err := pt.Digest(sandbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, err := os.Lstat(sh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sh, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sh, orig.Mode().Perm()) })
+	pre, err := os.Lstat(sh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runBothModes(t, bin, root, []pt.FindingPair{{Code: "read_error", Path: "/bin/sh"}})
+	if len(got) == 1 && !strings.HasPrefix(got[0].Detail, "cannot read: ") {
+		t.Errorf("detail = %q; want \"cannot read: \" prefix", got[0].Detail)
+	}
+	post, err := os.Lstat(sh)
+	if err != nil || post.Mode() != pre.Mode() || post.Size() != pre.Size() || !post.ModTime().Equal(pre.ModTime()) {
+		t.Errorf("shell metadata changed: %v (%v); want %v", post, err, pre)
+	}
+	if err := os.Chmod(sh, orig.Mode().Perm()); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := pt.Digest(sandbox); err != nil || after != before {
+		t.Errorf("manifest changed (%v):\nbefore:\n%s\nafter:\n%s", err, before, after)
+	}
+}

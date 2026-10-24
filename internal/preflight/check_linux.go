@@ -279,6 +279,13 @@ func checkShell(rootfd int, r *Report) {
 		r.add(prob.code, ShellPath, prob.detail)
 		return
 	}
+	// Mode bits of the resolved regular shell, from the Fstat locate already
+	// made; not an effective-access check. Later checks still run.
+	if st.Mode&0o111 == 0 {
+		r.add("shell_not_executable", ShellPath, fmt.Sprintf("resolves to a regular file with mode %04o; "+
+			"no owner, group or other execute bit is set (mode bits only; not a check of whether any user can run it)",
+			st.Mode&0o7777))
+	}
 	if !has {
 		r.Static = true
 		return
