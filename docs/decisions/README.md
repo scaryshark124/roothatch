@@ -55,6 +55,26 @@ push, tag/release, new credentials/settings, worker dispatch or privileged produ
 execution is implied. Historical setup receipts retain their former pending state;
 the current checkpoint and publication receipt control the live delivery status.
 
+## RH-D005 — Bounded functional milestones — ACCEPTED, 2026-10-24
+
+After RH-001 consumed roughly 23 worker runs on design and review without usable
+functionality, the owner approved BOUNDED-FUNCTIONAL-MILESTONES-V1. Work proceeds
+only inside an owner-approved milestone with one observable functional outcome and
+an acceptance test; documentation alone is not completion unless it is the
+approved deliverable. Each milestone has one shared allowance: 2 h wall clock,
+4 provider-backed worker runs, 150 completed model calls, 40M cumulative prompt
+tokens and 1 concurrent worker, across coordinator, workers, reviewers and
+auxiliary work. New cards, sessions, retries, review handoffs and wakes never
+reset it; renewal and the next milestone need explicit owner approval.
+
+Cards carry max runtime <= min(2 h, remaining wall time) and max retries 1, with
+notify-only subscriptions. Stop and report on exhaustion, on the same blocker after
+two correction/review rounds, or when a required checkpoint cannot fit. Automatic
+continuation stays off until the routing fix and cumulative runtime gate are
+delivered and tested. RH-001 remains paused; its design candidate is unchanged and
+is not accepted by this decision. The next Roothatch milestone needs its own brief
+and owner approval.
+
 ## Open choices
 
 RH-O001 (repository/module) and RH-O002 (license) are resolved by RH-D003.
