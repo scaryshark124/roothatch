@@ -8,8 +8,11 @@ Docker will not be a mandatory runtime dependency.
 
 ## Status
 
-**Pre-alpha project foundation.** Only `help` and `version` are implemented.
-There is no working chroot, mount, bootstrap, repair, image, or VM backend yet.
+**Pre-alpha.** Only `help` and `version` plus a limited, read-only `check <dir>`
+preflight are implemented. `check` reports whether `/bin/sh` and its ELF
+interpreter resolve inside `<dir>` as x86-64 ELF without leaving the tree; a pass
+does not show the root is bootable or healthy. There is no working chroot, mount,
+bootstrap, repair, image, or VM backend yet.
 Do not run this project as root or use it to repair an actual installation.
 
 ## The product we are building
@@ -41,6 +44,7 @@ go vet ./...
 go build -o ./bin/roothatch ./cmd/roothatch
 ./bin/roothatch help
 ./bin/roothatch version
+./bin/roothatch check /path/to/linux-root   # read-only; exit 0 pass, 3 findings
 ```
 
 Repository: https://github.com/scaryshark124/roothatch

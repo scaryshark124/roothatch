@@ -1,6 +1,7 @@
 # Architecture direction
 
-Only `cmd/roothatch` and `internal/cli` are executable code at bootstrap.
+Only `cmd/roothatch`, `internal/cli` and the read-only `internal/preflight` checker
+are executable code so far.
 The following are proposed component boundaries, not delivered implementations.
 
 ## One target, two execution modes

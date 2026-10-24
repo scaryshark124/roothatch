@@ -1,6 +1,6 @@
 # Roothatch master checklist
 
-Current position: **M0 COMPLETE — project foundation publicly published and verified; M1 onward is not implemented.**
+Current position: **M0 COMPLETE; read-only `check <dir>` preflight delivered (RH-M01); M1 design is held and M1 onward is not complete.**
 Completed foundation rows are backed by the historical
 [RH-000 receipt](docs/development/receipts/RH-000-BOOTSTRAP.md), subsequent
 [RH-002/003 setup receipt](docs/development/receipts/RH-002-003-SETUP.md), and
@@ -35,6 +35,7 @@ boot workflow; a shell-only demo is not that release.
 ## M2 — Enter correctly
 
 - [ ] **RH-M2-01** Nonmutating preflight with missing shell/loader/architecture diagnostics. Owner: exec/review. Proof: healthy and invalid synthetic roots.
+  Partial: synthetic-root `check` delivered and verified ([RH-M01 receipt](docs/development/receipts/RH-M01-PREFLIGHT-CHECK.md)); the row stays open while the M1 target/lifecycle design is held.
 - [ ] **RH-M2-02** Private mount namespace and managed proc/sys/dev/pts/run/DNS profiles. Owner: exec/review. Proof: real disposable runtime witnesses and original DNS preservation.
 - [ ] **RH-M2-03** Interactive terminal, signals, descendant lifecycle and exit-code propagation. Owner: exec/review. Proof: actual PTY/subprocess and interruption tests.
 - [ ] **RH-M2-04** Required boot/EFI mounts, no blind fstab mounting, host swap unchanged. Owner: exec/review. Proof: explicit selections, rejected ambiguity and unchanged-host witnesses.

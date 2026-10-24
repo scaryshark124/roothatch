@@ -1,48 +1,41 @@
 # Current delivery state
 
-Date: 2026-10-23
+Date: 2026-10-24
 
 ## Actual state
 
-The local bootstrap and worker instruction binding are complete. The previously
-held AGENTS.md write succeeded after the owner's explicit resubmission request.
-Roothatch-only addenda now bind ironcladexec, ironcladreview and ironcladsecurity
-to this project's policy. Original Ironclad instruction bytes are retained and
-model/account/tool configurations are unchanged.
+M0 project foundation is COMPLETE and public: initial commit
+`7716893bc28e6d1af0023f923fbf21b7e9d021df` on `main`, Apache-2.0, fresh-clone and
+hosted CI verification. See the [publication receipt](receipts/RH-002-PUBLICATION.md).
 
-Installed identity/project-context components load the correct instructions at
-repository root and nested source directories for all three profiles. Cache
-invalidation/reload also passed. This is component-loading proof, not live worker
-startup, an existing conversation refresh, provider/tool admission or guaranteed
-model compliance. No provider-backed worker has run.
+RH-M01 delivers `roothatch check <dir>`, an unprivileged, read-only preflight. It
+reports whether `/bin/sh` resolves inside `<dir>`, is ELF64 little-endian x86-64,
+and whether its ELF interpreter resolves inside `<dir>`. Symlinks are resolved
+component by component against `<dir>` and are never followed out of it. Exit
+status: 0 limited checks passed, 3 findings, 2 usage error, 1 output failure. It
+runs no target code, mounts nothing and writes nothing. Proof: independent
+functional review (one correction round) and parent acceptance of the compiled
+binary on 29 synthetic fixtures; see the [RH-M01 receipt](receipts/RH-M01-PREFLIGHT-CHECK.md).
+This is functional acceptance only, not a security PASS. Known limits: Linux only,
+requires `/proc`, a symlinked `<dir>` itself is followed, and the interpreter is
+checked only for presence and file type.
 
-Owner selected Apache-2.0 and created https://github.com/scaryshark124/roothatch.
-Canonical LICENSE and NOTICE are included; module/imports and local HTTPS origin
-match the repository. License and repository choices are resolved, not pending.
-
-M0 project foundation is COMPLETE: the initial source commit
-`7716893bc28e6d1af0023f923fbf21b7e9d021df` is public on `main`, GitHub recognizes
-Apache-2.0, both commit identities map to `scaryshark124`, fresh-clone verification
-passed, and hosted Go foundation run `39958969567` succeeded. See the
-[publication receipt](receipts/RH-002-PUBLICATION.md) for exact proof and limits.
-
-Only nonprivileged help/version is implemented. Native entry, doctor, bootstrap,
-storage and VM functionality are not delivered. M1 onward remains unfinished;
-completion of M0 is not a product release or privileged-runtime qualification.
+Implemented commands are `help`, `version` and `check`. Native entry, doctor,
+bootstrap, storage and VM functionality are not delivered. RH-M2-01 stays
+unchecked: `check` covers its synthetic-root diagnostics, but the row remains open
+while the M1 target/lifecycle design is held.
 
 ## Next action and remaining boundaries
 
-RH-D004's initial publication and privacy-safe author identity are fulfilled.
-Do not request the license, repository URL or initial publication approval again.
-The containing documentation-closure commit records observed initial publication
-without changing executable source. The parent verifies its remote readback and
-its own hosted CI before closing RH-002; those final identities are retained in
-the external publication receipt, avoiding a self-referential commit hash.
+Work proceeds only inside owner-approved bounded milestones (RH-D005); the next
+milestone needs explicit owner approval. RH-001 remains owner-paused and held for
+the bounded target/workspace and edit-to-boot design; retain real VM integration
+in the first release. No automatic worker assignment, privileged implementation,
+package installation or real-target operation follows. A separately scoped
+defensive design checkpoint precedes privileged implementation.
 
-RH-001 remains held for the bounded target/workspace and edit-to-boot design;
-retain real VM integration in the first release. No automatic worker assignment,
-privileged implementation, package installation or real-target operation follows.
-A separately scoped defensive design checkpoint precedes privileged implementation.
+Do not request the license, repository URL or initial publication approval again;
+RH-D003/RH-D004 are fulfilled.
 
 ## Navigation and historical records
 
