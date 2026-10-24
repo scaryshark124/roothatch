@@ -124,6 +124,7 @@ func TestCheckFixtures(t *testing.T) {
 				if !strings.Contains(low, "does not show") || !strings.Contains(low, "bootable") {
 					t.Errorf("PASS output must disclaim bootability: %q", out.String())
 				}
+				checkBootPassLines(t, fx, out.String())
 				return
 			}
 			if code != 3 {
@@ -144,6 +145,46 @@ func TestCheckFixtures(t *testing.T) {
 				t.Errorf("output leaks host path of root: %q", out.String())
 			}
 		})
+	}
+}
+
+// checkBootPassLines asserts the passing output reports the Debian kernels
+// found and the actual status of each optional shortcut link.
+func checkBootPassLines(t *testing.T, fx pt.Fixture, out string) {
+	t.Helper()
+	want := "ok: /boot has Debian-named kernel(s) with matching initrd: " + strings.Join(fx.Kernels, ", ") + "\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("stdout = %q; want line %q", out, want)
+	}
+	present := map[string]bool{}
+	for _, s := range fx.Shortcuts {
+		present[s] = true
+	}
+	for _, link := range []string{"/vmlinuz", "/initrd.img"} {
+		okLine := "ok: " + link + " resolves inside the root to "
+		absent := "note: " + link + " not present (optional shortcut link)\n"
+		if present[link] && (!strings.Contains(out, okLine) || strings.Contains(out, absent)) {
+			t.Errorf("stdout = %q; want %q and not %q", out, okLine, absent)
+		}
+		if !present[link] && (!strings.Contains(out, absent) || strings.Contains(out, okLine)) {
+			t.Errorf("stdout = %q; want %q and not %q", out, absent, okLine)
+		}
+	}
+	if !strings.Contains(out, "Debian /boot kernel/initrd naming") {
+		t.Errorf("PASS line must list the boot checks: %q", out)
+	}
+}
+
+func TestHelpListsBootChecks(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"help"}, &out, &errOut, "v"); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, s := range []string{"/boot", "vmlinuz-<version>", "initrd.img-<version>", "/vmlinuz", "/initrd.img",
+		"Debian", "does not show that <dir> is bootable"} {
+		if !strings.Contains(out.String(), s) {
+			t.Errorf("help lacks %q:\n%s", s, out.String())
+		}
 	}
 }
 

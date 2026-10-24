@@ -3,6 +3,7 @@ package preflight
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -79,6 +80,21 @@ func TestCatalog(t *testing.T) {
 			if len(want) == 0 && !fx.Static && r.Interp != pt.Loader {
 				t.Errorf("Interp = %q; want %q", r.Interp, pt.Loader)
 			}
+			if got, wantK := append([]string{}, r.Kernels...), append([]string{}, fx.Kernels...); !reflect.DeepEqual(got, wantK) {
+				t.Errorf("Kernels = %v; want %v", got, wantK)
+			}
+			present := []string{}
+			for _, l := range r.Links {
+				if l.Present {
+					present = append(present, l.Path)
+				}
+			}
+			if wantS := append([]string{}, fx.Shortcuts...); !reflect.DeepEqual(present, wantS) {
+				t.Errorf("present shortcuts = %v; want %v (links %+v)", present, wantS, r.Links)
+			}
+			if len(r.Links) != len(ShortcutLinks) {
+				t.Errorf("Links = %+v; want one status per shortcut %v", r.Links, ShortcutLinks)
+			}
 			after, err := pt.Digest(root)
 			if err != nil {
 				t.Fatal(err)
@@ -113,7 +129,7 @@ func TestEscapeNeverReadsHost(t *testing.T) {
 	if err := pt.Build(base, pt.File("outside/sh", pt.ELF(pt.EMX8664, secret))); err != nil {
 		t.Fatal(err)
 	}
-	if err := pt.Build(root, pt.Link("bin", "usr/bin"), pt.Link("usr/bin/sh", "../../../outside/sh")); err != nil {
+	if err := pt.Build(root, append([]pt.Entry{pt.Link("bin", "usr/bin"), pt.Link("usr/bin/sh", "../../../outside/sh")}, pt.BootLayout()...)...); err != nil {
 		t.Fatal(err)
 	}
 	r, err := runCheck(t, root)
@@ -125,6 +141,113 @@ func TestEscapeNeverReadsHost(t *testing.T) {
 	}
 	if r.Interp != "" || strings.Contains(r.Findings[0].Detail, "secret") {
 		t.Fatalf("outside file was read: %+v", r)
+	}
+}
+
+// healthyWith returns a healthy shell/interpreter tree plus extra entries.
+func healthyWith(extra ...pt.Entry) []pt.Entry {
+	return append([]pt.Entry{pt.Link("bin", "usr/bin"), pt.Link("lib64", "usr/lib64"),
+		pt.File("usr/bin/sh", pt.ELF(pt.EMX8664, pt.Loader)),
+		pt.File("usr/lib64/ld-linux-x86-64.so.2", []byte("loader"))}, extra...)
+}
+
+// TestBootEscapeNeverReadsHost points /boot at an outside directory holding a
+// valid-looking kernel layout. Following it would report that kernel.
+func TestBootEscapeNeverReadsHost(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	if err := pt.Build(base, pt.File("outside-boot/vmlinuz-secret", []byte("k")),
+		pt.File("outside-boot/initrd.img-secret", []byte("i"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := pt.Build(root, healthyWith(pt.Link("boot", "../outside-boot"),
+		pt.Link("vmlinuz", "../outside-boot/vmlinuz-secret"))...); err != nil {
+		t.Fatal(err)
+	}
+	r, err := runCheck(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := codes(r); !reflect.DeepEqual(got, []string{"symlink_escape", "symlink_escape"}) {
+		t.Fatalf("codes = %v; want [symlink_escape symlink_escape] (%+v)", got, r.Findings)
+	}
+	if len(r.Kernels) != 0 {
+		t.Fatalf("outside kernels reported: %v", r.Kernels)
+	}
+	for _, f := range r.Findings {
+		if strings.Contains(f.Path, "secret") && f.Path != "/vmlinuz" {
+			t.Fatalf("outside entry name leaked: %+v", f)
+		}
+	}
+}
+
+// TestBootEnumerationBound accepts exactly maxBootEntries entries and reports
+// a read_error, never a healthy result, when /boot holds more.
+func TestBootEnumerationBound(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		want []string
+	}{{maxBootEntries, []string{}}, {maxBootEntries + 1, []string{"read_error"}}} {
+		entries := healthyWith(pt.BootLayout()...)
+		for i := len(entries); len(entries)-4 < tc.n; i++ {
+			entries = append(entries, pt.File(fmt.Sprintf("boot/filler-%05d", i), nil))
+		}
+		root := build(t, entries...)
+		r, err := runCheck(t, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := codes(r); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%d entries: codes = %v; want %v (%+v)", tc.n, got, tc.want, r.Findings)
+		}
+		if len(tc.want) != 0 && (len(r.Kernels) != 0 || r.Findings[0].Path != "/boot") {
+			t.Errorf("%d entries: overflow must not report kernels: %+v", tc.n, r)
+		}
+	}
+}
+
+// TestBootUnreadable reports read_error for a /boot that cannot be listed.
+func TestBootUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not deny root")
+	}
+	root := build(t, healthyWith(pt.BootLayout()...)...)
+	boot := filepath.Join(root, "boot")
+	if err := os.Chmod(boot, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(boot, 0o755) })
+	r, err := runCheck(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := codes(r); !reflect.DeepEqual(got, []string{"read_error"}) || r.Findings[0].Path != "/boot" {
+		t.Errorf("codes = %v; want [read_error] for /boot (%+v)", got, r.Findings)
+	}
+	if len(r.Kernels) != 0 {
+		t.Errorf("unreadable /boot reported kernels %v", r.Kernels)
+	}
+}
+
+// TestBootFindingDetails pins the Debian-convention wording and the
+// per-version initrd path.
+func TestBootFindingDetails(t *testing.T) {
+	root := build(t, healthyWith(pt.File("boot/vmlinuz-6.2.0-x", []byte("k")))...)
+	r, err := runCheck(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Findings) != 1 || r.Findings[0].Path != "/boot/initrd.img-6.2.0-x" ||
+		!strings.Contains(r.Findings[0].Detail, "Debian") || !strings.Contains(r.Findings[0].Detail, "6.2.0-x") {
+		t.Errorf("initrd finding = %+v", r.Findings)
+	}
+	root = build(t, healthyWith(pt.Dir("boot"))...)
+	r, err = runCheck(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Findings) != 1 || r.Findings[0].Path != "/boot" || !strings.Contains(r.Findings[0].Detail, "Debian naming") {
+		t.Errorf("kernel finding = %+v", r.Findings)
 	}
 }
 
@@ -217,8 +340,8 @@ func TestMalformedELF(t *testing.T) {
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {
-			root := build(t, pt.Link("bin", "usr/bin"), pt.File("usr/bin/sh", data),
-				pt.Link("lib64", "usr/lib64"), pt.File("usr/lib64/ld-linux-x86-64.so.2", []byte("x")))
+			root := build(t, append([]pt.Entry{pt.Link("bin", "usr/bin"), pt.File("usr/bin/sh", data),
+				pt.Link("lib64", "usr/lib64"), pt.File("usr/lib64/ld-linux-x86-64.so.2", []byte("x"))}, pt.BootLayout()...)...)
 			r, err := runCheck(t, root)
 			if err != nil {
 				t.Fatal(err)

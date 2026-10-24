@@ -10,8 +10,11 @@ Docker will not be a mandatory runtime dependency.
 
 **Pre-alpha.** Only `help` and `version` plus a limited, read-only `check <dir>`
 preflight are implemented. `check` reports whether `/bin/sh` and its ELF
-interpreter resolve inside `<dir>` as x86-64 ELF without leaving the tree; a pass
-does not show the root is bootable or healthy. There is no working chroot, mount,
+interpreter resolve inside `<dir>` as x86-64 ELF without leaving the tree, and
+applies Debian naming-convention consistency checks to the in-tree `/boot`
+(`vmlinuz-<version>` with a matching `initrd.img-<version>`, plus the optional
+`/vmlinuz` and `/initrd.img` links); a pass does not show the root is bootable or
+healthy. There is no working chroot, mount,
 bootstrap, repair, image, or VM backend yet.
 Do not run this project as root or use it to repair an actual installation.
 

@@ -16,8 +16,15 @@ Usage: roothatch [help|version]
 
 check inspects the Linux root tree at <dir> read-only and without privileges.
 It checks only that /bin/sh resolves inside <dir>, is an ELF64 little-endian
-x86-64 file, and that its ELF interpreter (PT_INTERP) resolves inside <dir>;
-symlinks leaving <dir> are reported and never followed onto the host.
+x86-64 file, and that its ELF interpreter (PT_INTERP) resolves inside <dir>.
+Independently it applies Debian naming-convention consistency checks to the
+in-tree <dir>/boot: at least one /boot/vmlinuz-<version> regular file, and a
+matching /boot/initrd.img-<version> regular file for every such kernel; the
+optional /vmlinuz and /initrd.img shortcut links, when present, must resolve
+inside <dir> to regular files. File contents of kernels and initrds are not
+read. Separate /boot or EFI partitions, bootloader configuration and initramfs
+contents are not checked. Symlinks leaving <dir> are reported and never
+followed onto the host.
 Exit status: 0 limited checks passed, 3 findings reported, 2 usage error,
 1 output failure. Passing does not show that <dir> is bootable or healthy.
 
@@ -84,6 +91,14 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	} else {
 		fmt.Fprintf(&b, "ok: /bin/sh is ELF64 little-endian x86-64; interpreter %s resolves inside the root\n", report.Interp)
 	}
-	b.WriteString("PASS: limited checks passed (shell, ELF architecture, interpreter, symlink containment); this does not show the root is bootable or healthy\n")
+	fmt.Fprintf(&b, "ok: /boot has Debian-named kernel(s) with matching initrd: %s\n", strings.Join(report.Kernels, ", "))
+	for _, l := range report.Links {
+		if l.OK {
+			fmt.Fprintf(&b, "ok: %s resolves inside the root to %s, a regular file\n", l.Path, l.Resolved)
+		} else {
+			fmt.Fprintf(&b, "note: %s not present (optional shortcut link)\n", l.Path)
+		}
+	}
+	b.WriteString("PASS: limited checks passed (shell, ELF architecture, interpreter, Debian /boot kernel/initrd naming, optional /vmlinuz and /initrd.img links, symlink containment); this does not show the root is bootable or healthy\n")
 	return write(stdout, stderr, b.String(), 0)
 }

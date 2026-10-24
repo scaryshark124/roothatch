@@ -1,6 +1,6 @@
 # Roothatch master checklist
 
-Current position: **M0 COMPLETE; read-only `check <dir>` preflight delivered (RH-M01); M1 design is held and M1 onward is not complete.**
+Current position: **M0 COMPLETE; read-only `check <dir>` preflight delivered (RH-M01) with in-tree `/boot` kernel/initrd checks (RH-M04); M1 design is held and M1 onward is not complete.**
 Completed foundation rows are backed by the historical
 [RH-000 receipt](docs/development/receipts/RH-000-BOOTSTRAP.md), subsequent
 [RH-002/003 setup receipt](docs/development/receipts/RH-002-003-SETUP.md), and
@@ -61,6 +61,7 @@ boot workflow; a shell-only demo is not that release.
 ## M5 — Repair and recovery capabilities
 
 - [ ] **RH-M5-01** Read-only doctor for boot artifacts, references, package state and available previous-boot logs. Owner: exec/review. Proof: seeded faults, explained findings and unchanged targets.
+  Partial: in-tree `/boot` Debian-naming kernel/initrd and shortcut-link checks delivered ([RH-M04 receipt](docs/development/receipts/RH-M04-BOOT-CHECK.md)); references, package state and boot logs remain open.
 - [ ] **RH-M5-02** Explicit repair actions, not automatic repair-everything. Owner: exec/review. Proof: selected effect, before/after checks and recovery path.
 - [ ] **RH-M5-03** Named snapshot/copy checkpoints with honest storage limits. Owner: exec/review. Proof: actual restore; no raw-device/firmware rollback promise.
 - [ ] **RH-M5-04** Upgrade rehearsal in a disposable copy, reboot and compare. Owner: exec/review. Proof: good/bad upgrade cases, preserved original and actual second boot.

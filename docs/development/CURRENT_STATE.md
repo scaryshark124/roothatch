@@ -20,6 +20,21 @@ This is functional acceptance only, not a security PASS. Known limits: Linux onl
 requires `/proc`, a symlinked `<dir>` itself is followed, and the interpreter is
 checked only for presence and file type.
 
+RH-M04 extends `check` with read-only Debian naming-convention consistency checks
+on the in-tree `/boot`: at least one `vmlinuz-<version>` regular file
+(`kernel_missing`), a matching `initrd.img-<version>` for each kernel
+(`initrd_missing`), and optional `/vmlinuz` and `/initrd.img` links that, when
+present, must resolve inside the root to regular files (`boot_link_broken`,
+`symlink_escape`). Missing shortcut links are not a finding. Boot checks run even
+when shell checks fail. `/boot` is enumerated only through the confined directory
+descriptor with a 4096-entry cap. Kernel/initrd contents, bootloader
+configuration and separate boot/EFI partitions are not checked, and a finding is
+not a bootability verdict. Proof: independent functional review (round 1 PASS)
+and parent acceptance of the compiled binary on 54 synthetic fixtures with exact
+finding-code matching and unchanged trees; see the
+[RH-M04 receipt](receipts/RH-M04-BOOT-CHECK.md). Functional acceptance only, not a
+security PASS.
+
 Implemented commands are `help`, `version` and `check`. Native entry, doctor,
 bootstrap, storage and VM functionality are not delivered. RH-M2-01 stays
 unchecked: `check` covers its synthetic-root diagnostics, but the row remains open

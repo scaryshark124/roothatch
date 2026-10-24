@@ -5,6 +5,9 @@ package preflight
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -245,6 +248,8 @@ func locate(rootfd int, p string, ro role, r *Report) (int, *syscall.Stat_t, boo
 
 // Check inspects the root tree at dir. It returns an error only when dir
 // itself cannot be opened as a directory; every other problem is a finding.
+// The shell/interpreter checks and the /boot checks run independently and
+// all findings are reported in a deterministic order.
 func Check(dir string) (Report, error) {
 	rootfd, err := syscall.Open(dir, oPath|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
 	if err != nil {
@@ -252,28 +257,213 @@ func Check(dir string) (Report, error) {
 	}
 	defer syscall.Close(rootfd)
 	var r Report
-	fd, st, ok := locate(rootfd, ShellPath, shellRole, &r)
+	checkShell(rootfd, &r)
+	checkBoot(rootfd, &r)
+	checkShortcuts(rootfd, &r)
+	return r, nil
+}
+
+func checkShell(rootfd int, r *Report) {
+	fd, st, ok := locate(rootfd, ShellPath, shellRole, r)
 	if !ok {
-		return r, nil
+		return
 	}
 	data, size, err := readPinned(fd, st)
 	syscall.Close(fd)
 	if err != nil {
 		r.add("read_error", ShellPath, "cannot read: "+err.Error())
-		return r, nil
+		return
 	}
 	interp, has, prob := parseELF(data, size)
 	if prob != nil {
 		r.add(prob.code, ShellPath, prob.detail)
-		return r, nil
+		return
 	}
 	if !has {
 		r.Static = true
-		return r, nil
+		return
 	}
 	r.Interp = clean(interp)
-	if ifd, _, ok := locate(rootfd, interp, interpRole, &r); ok {
+	if ifd, _, ok := locate(rootfd, interp, interpRole, r); ok {
 		syscall.Close(ifd)
 	}
-	return r, nil
+}
+
+// regularIn resolves p confined to the root and reports whether it is a
+// regular file. On failure it returns the resolver failure, or a failMissing
+// failure describing the non-regular object. It never opens file contents.
+func regularIn(rootfd int, p string) (string, *resolveFail) {
+	fd, cur, fail := resolve(rootfd, p)
+	if fail != nil {
+		return "", fail
+	}
+	defer syscall.Close(fd)
+	var st syscall.Stat_t
+	if err := syscall.Fstat(fd, &st); err != nil {
+		return "", &resolveFail{failIO, "cannot stat " + clean(cur) + ": " + err.Error()}
+	}
+	if st.Mode&syscall.S_IFMT != syscall.S_IFREG {
+		return "", &resolveFail{failMissing, "resolves to " + clean(cur) + ", which is " + kindName(st.Mode)}
+	}
+	return cur, nil
+}
+
+// listPinnedDir lists the names in the directory pinned by an O_PATH
+// descriptor. It reopens exactly that directory relative to the pinned
+// descriptor (".", O_NOFOLLOW) and verifies device and inode, so no pathname
+// from the selected root is walked again. It enforces maxBootEntries and
+// maxBootName.
+func listPinnedDir(pinned int) ([]string, error) {
+	var want syscall.Stat_t
+	if err := syscall.Fstat(pinned, &want); err != nil {
+		return nil, err
+	}
+	fd, err := syscall.Openat(pinned, ".", syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open directory for listing: %v", err)
+	}
+	f := os.NewFile(uintptr(fd), "boot")
+	defer f.Close()
+	var st syscall.Stat_t
+	if err := syscall.Fstat(fd, &st); err != nil {
+		return nil, err
+	}
+	if st.Dev != want.Dev || st.Ino != want.Ino || st.Mode&syscall.S_IFMT != syscall.S_IFDIR {
+		return nil, errors.New("reopened directory is not the pinned directory")
+	}
+	var names []string
+	for {
+		batch, err := f.Readdirnames(256)
+		for _, n := range batch {
+			if len(n) == 0 || len(n) > maxBootName {
+				return nil, fmt.Errorf("entry name length %d outside 1..%d", len(n), maxBootName)
+			}
+		}
+		names = append(names, batch...)
+		if len(names) > maxBootEntries {
+			return nil, fmt.Errorf("more than %d entries; not enumerated further", maxBootEntries)
+		}
+		if err == io.EOF || (err == nil && len(batch) == 0) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("cannot list directory: %v", err)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+const (
+	kernelPrefix = "vmlinuz-"
+	initrdPrefix = "initrd.img-"
+	debianNote   = " (Debian naming convention consistency check; not a bootability verdict)"
+)
+
+// checkBoot checks in-tree /boot for Debian-named kernels and matching
+// initrds. It never reads kernel or initrd contents.
+func checkBoot(rootfd int, r *Report) {
+	bootfd, cur, fail := resolve(rootfd, BootDir)
+	if fail != nil {
+		switch fail.kind {
+		case failEscape:
+			r.add("symlink_escape", BootDir, fail.detail)
+		case failIO:
+			r.add("read_error", BootDir, fail.detail)
+		case failLoop:
+			r.add("kernel_missing", BootDir, fail.detail+"; no vmlinuz-<version> kernel in /boot"+debianNote)
+		default:
+			r.add("kernel_missing", BootDir, "/boot does not exist inside the root; no vmlinuz-<version> kernel"+debianNote)
+		}
+		return
+	}
+	var st syscall.Stat_t
+	err := syscall.Fstat(bootfd, &st)
+	if err != nil {
+		syscall.Close(bootfd)
+		r.add("read_error", BootDir, "cannot stat "+clean(cur)+": "+err.Error())
+		return
+	}
+	if st.Mode&syscall.S_IFMT != syscall.S_IFDIR {
+		syscall.Close(bootfd)
+		r.add("kernel_missing", BootDir, "/boot resolves to "+clean(cur)+", which is "+kindName(st.Mode)+
+			", not a directory; no vmlinuz-<version> kernel"+debianNote)
+		return
+	}
+	names, err := listPinnedDir(bootfd)
+	syscall.Close(bootfd)
+	if err != nil {
+		r.add("read_error", BootDir, "cannot enumerate "+clean(cur)+": "+err.Error())
+		return
+	}
+	// Resolve candidates by in-root path from the root so ".." and absolute
+	// targets are handled by the confined resolver.
+	var kernels []string
+	skipped := 0
+	for _, n := range names {
+		ver, ok := strings.CutPrefix(n, kernelPrefix)
+		if !ok {
+			continue
+		}
+		if ver == "" {
+			skipped++
+			continue
+		}
+		if _, f := regularIn(rootfd, BootDir+"/"+n); f != nil {
+			if f.kind == failIO {
+				r.add("read_error", BootDir+"/"+n, f.detail)
+			}
+			skipped++
+			continue
+		}
+		kernels = append(kernels, ver)
+	}
+	if len(kernels) == 0 {
+		detail := "no vmlinuz-<version> kernel in /boot" + debianNote
+		if skipped > 0 {
+			detail += fmt.Sprintf("; %d vmlinuz-* entr(y/ies) ignored (empty version or not a regular file inside the root)", skipped)
+		}
+		r.add("kernel_missing", BootDir, detail)
+		return
+	}
+	for _, ver := range kernels {
+		r.Kernels = append(r.Kernels, clean(ver))
+		ip := BootDir + "/" + initrdPrefix + ver
+		if _, f := regularIn(rootfd, ip); f != nil {
+			r.add("initrd_missing", ip, "kernel version "+clean(ver)+" has no matching initrd.img-"+clean(ver)+
+				" regular file inside the root: "+f.detail+debianNote)
+		}
+	}
+}
+
+// checkShortcuts checks the optional root shortcut links /vmlinuz and
+// /initrd.img. An absent entry is not a finding.
+func checkShortcuts(rootfd int, r *Report) {
+	for _, p := range ShortcutLinks {
+		ls := LinkStatus{Path: p}
+		probe, err := syscall.Openat(rootfd, strings.TrimPrefix(p, "/"), oPath|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+		if err == syscall.ENOENT {
+			r.Links = append(r.Links, ls)
+			continue
+		}
+		if err != nil {
+			r.Links = append(r.Links, ls)
+			r.add("read_error", p, "cannot look up "+p+": "+err.Error())
+			continue
+		}
+		syscall.Close(probe)
+		ls.Present = true
+		cur, f := regularIn(rootfd, p)
+		switch {
+		case f == nil:
+			ls.OK, ls.Resolved = true, clean(cur)
+		case f.kind == failEscape:
+			r.add("symlink_escape", p, f.detail)
+		case f.kind == failIO:
+			r.add("read_error", p, f.detail)
+		default:
+			r.add("boot_link_broken", p, "optional shortcut does not resolve to a regular file inside the root: "+f.detail+debianNote)
+		}
+		r.Links = append(r.Links, ls)
+	}
 }

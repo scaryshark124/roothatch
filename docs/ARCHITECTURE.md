@@ -1,7 +1,10 @@
 # Architecture direction
 
 Only `cmd/roothatch`, `internal/cli` and the read-only `internal/preflight` checker
-are executable code so far.
+are executable code so far. The checker inspects `/bin/sh`, its ELF interpreter
+and, by Debian naming convention only, the in-tree `/boot` kernels/initrds and
+optional `/vmlinuz`/`/initrd.img` links, all through descriptor-confined
+resolution; it does not establish bootability.
 The following are proposed component boundaries, not delivered implementations.
 
 ## One target, two execution modes

@@ -157,6 +157,36 @@ type Fixture struct {
 	Entries []Entry
 	Want    []string
 	Static  bool // expected to pass as a static (no PT_INTERP) shell
+	// Kernels is the expected sorted list of valid Debian-named kernel
+	// versions found in /boot (Report.Kernels); nil means none.
+	Kernels []string
+	// Shortcuts names the optional root shortcut links (/vmlinuz,
+	// /initrd.img) expected to be present, in check order.
+	Shortcuts []string
+}
+
+// KernelVersion is the version of the synthetic Debian boot layout.
+const KernelVersion = "6.1.0-test"
+
+// BootLayout returns a valid synthetic Debian /boot layout: a kernel and the
+// matching initrd as plain placeholder bytes (never real kernel images).
+func BootLayout() []Entry { return bootFilesAt("boot", KernelVersion) }
+
+func bootFilesAt(dir, ver string) []Entry {
+	return []Entry{
+		File(dir+"/vmlinuz-"+ver, []byte("synthetic kernel placeholder "+ver)),
+		File(dir+"/initrd.img-"+ver, []byte("synthetic initrd placeholder "+ver)),
+	}
+}
+
+// withBoot adds the valid synthetic boot layout to every fixture so the
+// boot checks pass and each fixture keeps exactly its shell/interpreter Want.
+func withBoot(fxs []Fixture) []Fixture {
+	for i := range fxs {
+		fxs[i].Entries = append(append([]Entry{}, fxs[i].Entries...), BootLayout()...)
+		fxs[i].Kernels = []string{KernelVersion}
+	}
+	return fxs
 }
 
 func mergedUsr(extra ...Entry) []Entry {
@@ -185,7 +215,7 @@ func Catalog() []Fixture {
 	elf32[4] = 1
 	bigEndian := ELF(EMX8664, Loader)
 	bigEndian[5] = 2
-	return []Fixture{
+	return append(withBoot([]Fixture{
 		{Name: "healthy_merged_usr", Entries: mergedUsr(shell(), loaderFile())},
 		{Name: "missing_shell", Entries: mergedUsr(loaderFile()), Want: []string{"shell_missing"}},
 		{Name: "dangling_shell_link", Entries: mergedUsr(Link("usr/bin/sh", "dash"), loaderFile()), Want: []string{"shell_missing"}},
@@ -221,5 +251,63 @@ func Catalog() []Fixture {
 		{Name: "dir_link_trailing_slash", Entries: []Entry{
 			Link("bin", "usr/bin/"), Link("lib64", "usr/lib64/"), Dir("usr/bin"), Dir("usr/lib64"), shell(), loaderFile(),
 		}},
+	}), bootCatalog()...)
+}
+
+// bootCatalog returns the /boot and shortcut-link fixtures. Each has a
+// healthy shell and interpreter unless stated otherwise, so only boot
+// findings are expected.
+func bootCatalog() []Fixture {
+	v := KernelVersion
+	healthy := func(extra ...Entry) []Entry { return mergedUsr(append([]Entry{shell(), loaderFile()}, extra...)...) }
+	layout := func(extra ...Entry) []Entry { return healthy(append(BootLayout(), extra...)...) }
+	one := []string{v}
+	both := []string{"/vmlinuz", "/initrd.img"}
+	return []Fixture{
+		{Name: "boot_shortcuts_relative", Entries: layout(Link("vmlinuz", "boot/vmlinuz-"+v), Link("initrd.img", "boot/initrd.img-"+v)),
+			Kernels: one, Shortcuts: both},
+		{Name: "boot_shortcuts_absolute", Entries: layout(Link("vmlinuz", "/boot/vmlinuz-"+v), Link("initrd.img", "/boot/initrd.img-"+v)),
+			Kernels: one, Shortcuts: both},
+		{Name: "boot_shortcut_regular_file", Entries: layout(File("vmlinuz", []byte("k"))), Kernels: one, Shortcuts: []string{"/vmlinuz"}},
+		{Name: "boot_missing", Entries: healthy(), Want: []string{"kernel_missing"}},
+		{Name: "boot_not_directory", Entries: healthy(File("boot", []byte("not a dir"))), Want: []string{"kernel_missing"}},
+		{Name: "boot_empty", Entries: healthy(Dir("boot")), Want: []string{"kernel_missing"}},
+		{Name: "boot_kernel_empty_version", Entries: healthy(File("boot/vmlinuz-", []byte("k")), File("boot/initrd.img-", []byte("i"))),
+			Want: []string{"kernel_missing"}},
+		{Name: "boot_kernel_without_initrd", Entries: healthy(File("boot/vmlinuz-"+v, []byte("k"))),
+			Want: []string{"initrd_missing"}, Kernels: one},
+		{Name: "boot_two_kernels_one_initrd", Entries: layout(File("boot/vmlinuz-6.2.0-test", []byte("k"))),
+			Want: []string{"initrd_missing"}, Kernels: []string{v, "6.2.0-test"}},
+		{Name: "boot_two_kernels_two_initrds", Entries: layout(bootFilesAt("boot", "5.10.0-test")...),
+			Kernels: []string{"5.10.0-test", v}},
+		{Name: "boot_initrd_directory", Entries: healthy(File("boot/vmlinuz-"+v, []byte("k")), Dir("boot/initrd.img-"+v)),
+			Want: []string{"initrd_missing"}, Kernels: one},
+		{Name: "boot_initrd_escape", Entries: healthy(File("boot/vmlinuz-"+v, []byte("k")), Link("boot/initrd.img-"+v, "../../outside-initrd")),
+			Want: []string{"initrd_missing"}, Kernels: one},
+		{Name: "boot_kernel_directory", Entries: healthy(Dir("boot/vmlinuz-"+v), File("boot/initrd.img-"+v, []byte("i"))),
+			Want: []string{"kernel_missing"}},
+		{Name: "boot_kernel_fifo", Entries: healthy(FIFO("boot/vmlinuz-"+v), File("boot/initrd.img-"+v, []byte("i"))),
+			Want: []string{"kernel_missing"}},
+		{Name: "boot_kernel_escape", Entries: healthy(Link("boot/vmlinuz-"+v, "../../outside-kernel"), File("boot/initrd.img-"+v, []byte("i"))),
+			Want: []string{"kernel_missing"}},
+		{Name: "boot_kernel_link_in_tree", Entries: healthy(File("opt/k/vmlinuz", []byte("k")), Link("boot/vmlinuz-"+v, "/opt/k/vmlinuz"),
+			File("boot/initrd.img-"+v, []byte("i"))), Kernels: one},
+		{Name: "boot_vmlinuz_dangling", Entries: layout(Link("vmlinuz", "boot/vmlinuz-9.9.9-absent")),
+			Want: []string{"boot_link_broken"}, Kernels: one, Shortcuts: []string{"/vmlinuz"}},
+		{Name: "boot_vmlinuz_escape", Entries: layout(Link("vmlinuz", "../boot/vmlinuz-"+v)),
+			Want: []string{"symlink_escape"}, Kernels: one, Shortcuts: []string{"/vmlinuz"}},
+		{Name: "boot_vmlinuz_loop", Entries: layout(Link("vmlinuz", "vmlinuz")),
+			Want: []string{"boot_link_broken"}, Kernels: one, Shortcuts: []string{"/vmlinuz"}},
+		{Name: "boot_vmlinuz_directory", Entries: layout(Link("vmlinuz", "boot")),
+			Want: []string{"boot_link_broken"}, Kernels: one, Shortcuts: []string{"/vmlinuz"}},
+		{Name: "boot_initrd_link_trailing_slash", Entries: layout(Link("initrd.img", "boot/initrd.img-"+v+"/")),
+			Want: []string{"boot_link_broken"}, Kernels: one, Shortcuts: []string{"/initrd.img"}},
+		{Name: "boot_symlink_escape", Entries: healthy(Link("boot", "../outside-boot")), Want: []string{"symlink_escape"}},
+		// Real directories are created before the boot link that names them.
+		{Name: "boot_symlink_in_tree", Entries: healthy(append(bootFilesAt("realboot", v), Link("boot", "realboot"))...), Kernels: one},
+		{Name: "boot_symlink_absolute_in_tree", Entries: healthy(append(bootFilesAt("srv/realboot", v), Link("boot", "/srv/realboot/"))...),
+			Kernels: one},
+		{Name: "boot_and_shell_findings", Entries: mergedUsr(loaderFile(), Dir("boot"), Link("vmlinuz", "nowhere")),
+			Want: []string{"shell_missing", "kernel_missing", "boot_link_broken"}, Shortcuts: []string{"/vmlinuz"}},
 	}
 }

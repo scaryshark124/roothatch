@@ -8,6 +8,13 @@
 - Added `roothatch check <dir>`: unprivileged, read-only preflight for `/bin/sh`,
   its x86-64 ELF architecture and its interpreter, with symlink containment.
   Exit 0 limited checks passed, 3 findings, 2 usage error, 1 output failure.
+- `check` also applies read-only Debian naming-convention consistency checks to
+  the in-tree `/boot`: at least one `vmlinuz-<version>` regular file
+  (`kernel_missing`), a matching `initrd.img-<version>` per kernel
+  (`initrd_missing`), and optional `/vmlinuz` and `/initrd.img` links that must
+  resolve inside the root to regular files (`boot_link_broken`,
+  `symlink_escape`). Kernel and initrd contents are not read; separate /boot or
+  EFI partitions and bootloader configuration are not checked.
 
 - Selected Apache-2.0, included LICENSE/NOTICE and bound the actual GitHub module.
 - Approved project guidance and Roothatch-specific role bindings; verified native
