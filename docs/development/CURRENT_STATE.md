@@ -18,7 +18,7 @@ functional review (one correction round) and parent acceptance of the compiled
 binary on 29 synthetic fixtures; see the [RH-M01 receipt](receipts/RH-M01-PREFLIGHT-CHECK.md).
 This is functional acceptance only, not a security PASS. Known limits: Linux only,
 requires `/proc`, a symlinked `<dir>` itself is followed, and the interpreter is
-checked only for presence and file type.
+checked only for presence and file type (superseded by RH-M08 below).
 
 RH-M04 extends `check` with read-only Debian naming-convention consistency checks
 on the in-tree `/boot`: at least one `vmlinuz-<version>` regular file
@@ -66,6 +66,19 @@ comparison of the previous and new binaries on 67 synthetic fixtures, where only
 the three escaping-initrd fixtures changed and removing the added findings
 reproduced the previous output's findings exactly; see the
 [RH-M07 receipt](receipts/RH-M07-INITRD-ESCAPE.md).
+
+RH-M08 checks the ELF interpreter's header. After `/bin/sh`'s PT_INTERP resolves
+inside the root to a regular file, `check` reads it through the existing pinned,
+bounded reader and examines only ELF identification, the class-specific header
+length and `e_machine` in the declared byte order. Malformed or truncated headers
+report `interp_elf_invalid`; complete headers that are not ELF64 little-endian
+x86-64 report `interp_arch_unsupported`; an unreadable interpreter now reports
+`read_error` instead of passing silently. This is a header-level check, not proof
+that the loader works. Proof: independent functional review (round 1 PASS) and
+parent comparison of the previous and new binaries on the same 80 updated
+synthetic fixtures, where only the ten new failing interpreter fixtures changed,
+plus an unprivileged unreadable-interpreter run; see the
+[RH-M08 receipt](receipts/RH-M08-INTERP-HEADER.md).
 
 Implemented commands are `help`, `version` and `check` (with `--json`). Native entry, doctor,
 bootstrap, storage and VM functionality are not delivered. RH-M2-01 stays

@@ -18,7 +18,9 @@ Usage: roothatch [help|version]
 
 check inspects the Linux root tree at <dir> read-only and without privileges.
 It checks only that /bin/sh resolves inside <dir>, is an ELF64 little-endian
-x86-64 file, and that its ELF interpreter (PT_INTERP) resolves inside <dir>.
+x86-64 file, and that its ELF interpreter (PT_INTERP) resolves inside <dir> to
+a regular file whose ELF header declares ELF64 little-endian x86-64. That is a
+header-level check only; the loader is never run or otherwise validated.
 Independently it applies Debian naming-convention consistency checks to the
 in-tree <dir>/boot: at least one /boot/vmlinuz-<version> regular file, and a
 matching /boot/initrd.img-<version> regular file for every such kernel; the

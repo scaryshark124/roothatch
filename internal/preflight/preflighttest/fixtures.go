@@ -17,11 +17,47 @@ import (
 
 // ELF machine numbers used by the fixtures.
 const (
+	EMI386    = 3
 	EMX8664   = 62
 	EMAArch64 = 183
 	// Loader is the x86-64 glibc PT_INTERP path.
 	Loader = "/lib64/ld-linux-x86-64.so.2"
 )
+
+// ELF identification values used by Header.
+const (
+	ELFClass32 = 1
+	ELFClass64 = 2
+	ELFDataLSB = 1 // little-endian
+	ELFDataMSB = 2 // big-endian
+)
+
+// Header returns a bare ELF file header with the given EI_CLASS, EI_DATA and
+// e_machine, encoded in that class's own layout and byte order: 52 bytes for
+// ELF32, 64 bytes for ELF64. It is ET_DYN, EV_CURRENT, with e_ehsize set and
+// no program or section header tables.
+func Header(class, data byte, machine uint16) []byte {
+	var bo binary.ByteOrder = binary.LittleEndian
+	if data == ELFDataMSB {
+		bo = binary.BigEndian
+	}
+	size, ehsizeOff := 64, 52 // ELF64: e_entry, e_phoff and e_shoff are 8 bytes
+	if class == ELFClass32 {
+		size, ehsizeOff = 52, 40 // ELF32: e_entry, e_phoff and e_shoff are 4 bytes
+	}
+	b := make([]byte, size)
+	copy(b, "\x7fELF")
+	b[4], b[5], b[6] = class, data, 1 // EI_CLASS, EI_DATA, EI_VERSION
+	bo.PutUint16(b[16:], 3)           // e_type ET_DYN
+	bo.PutUint16(b[18:], machine)     // e_machine
+	bo.PutUint32(b[20:], 1)           // e_version EV_CURRENT
+	bo.PutUint16(b[ehsizeOff:], uint16(size))
+	return b
+}
+
+// LoaderELF returns a synthetic healthy interpreter: a generated ELF64
+// little-endian x86-64 image (never a host loader).
+func LoaderELF() []byte { return ELF(EMX8664, "") }
 
 // ELF returns a minimal little-endian ELF64 ET_DYN image for machine. It has
 // one PT_LOAD program header and, when interp is non-empty, a PT_INTERP header
@@ -237,7 +273,7 @@ func mergedUsr(extra ...Entry) []Entry {
 }
 
 func loaderFile() Entry {
-	return File("usr/lib64/ld-linux-x86-64.so.2", []byte("synthetic loader placeholder"))
+	return File("usr/lib64/ld-linux-x86-64.so.2", LoaderELF())
 }
 
 func shell() Entry { return File("usr/bin/sh", ELF(EMX8664, Loader)) }
@@ -276,7 +312,7 @@ func Catalog() []Fixture {
 			Link("bin", "usr/bin"), shell(), Dir("lib64"),
 			Link("lib64/ld-linux-x86-64.so.2", "../../../../lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"),
 		}, Want: []string{"symlink_escape"}},
-		{Name: "debian_absolute_loader", Entries: debian(File("usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2", []byte("synthetic loader")))},
+		{Name: "debian_absolute_loader", Entries: debian(File("usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2", LoaderELF()))},
 		{Name: "absolute_loader_target_only_on_host", Entries: debian(), Want: []string{"interp_missing"}},
 		{Name: "static_shell", Entries: mergedUsr(File("usr/bin/sh", ELF(EMX8664, ""))), Static: true},
 		{Name: "loop_self", Entries: mergedUsr(Link("usr/bin/sh", "sh")), Want: []string{"symlink_loop"}},
@@ -296,7 +332,49 @@ func Catalog() []Fixture {
 		{Name: "dir_link_trailing_slash", Entries: []Entry{
 			Link("bin", "usr/bin/"), Link("lib64", "usr/lib64/"), Dir("usr/bin"), Dir("usr/lib64"), shell(), loaderFile(),
 		}},
-	}), bootCatalog()...)
+	}), append(bootCatalog(), InterpCatalog()...)...)
+}
+
+// LargeLoaderSize is the size of the interp_large_valid_header loader, well
+// beyond the 64 KiB read cap.
+const LargeLoaderSize = 1 << 20
+
+// InterpCatalog returns the interpreter header fixtures (also included in
+// Catalog): a healthy /bin/sh whose PT_INTERP resolves inside the root to a
+// regular file with the given contents, plus the valid boot layout, so only
+// interpreter header findings are expected, reported at the PT_INTERP path.
+func InterpCatalog() []Fixture {
+	const ld = "usr/lib64/ld-linux-x86-64.so.2"
+	with := func(loader []byte) []Entry { return mergedUsr(shell(), File(ld, loader)) }
+	bad := func(name, code string, loader []byte) Fixture {
+		return Fixture{Name: name, Entries: with(loader), Want: []string{code},
+			Findings: []FindingPair{{code, Loader}}}
+	}
+	ident := func(i int, v byte) []byte {
+		b := Header(ELFClass64, ELFDataLSB, EMX8664)
+		b[i] = v
+		return b
+	}
+	large := make([]byte, LargeLoaderSize)
+	copy(large, Header(ELFClass64, ELFDataLSB, EMX8664))
+	const real = "usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+	return withBoot([]Fixture{
+		bad("interp_elf_text", "interp_elf_invalid", []byte("synthetic loader placeholder")),
+		bad("interp_elf_empty", "interp_elf_invalid", nil),
+		bad("interp_elf_truncated_elf64", "interp_elf_invalid", Header(ELFClass64, ELFDataLSB, EMX8664)[:63]),
+		bad("interp_elf_bad_class", "interp_elf_invalid", ident(4, 3)),
+		bad("interp_elf_bad_data", "interp_elf_invalid", ident(5, 3)),
+		bad("interp_elf_bad_ident_version", "interp_elf_invalid", ident(6, 2)),
+		bad("interp_elf_truncated_elf32", "interp_elf_invalid", Header(ELFClass32, ELFDataLSB, EMI386)[:51]),
+		bad("interp_arch_aarch64", "interp_arch_unsupported", Header(ELFClass64, ELFDataLSB, EMAArch64)),
+		bad("interp_arch_elf32_i386", "interp_arch_unsupported", Header(ELFClass32, ELFDataLSB, EMI386)),
+		bad("interp_arch_elf64_big_endian", "interp_arch_unsupported", Header(ELFClass64, ELFDataMSB, EMX8664)),
+		{Name: "interp_link_relative_in_tree", Entries: mergedUsr(shell(), File(real, LoaderELF()),
+			Link(ld, "../lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"))},
+		{Name: "interp_link_absolute_in_tree", Entries: mergedUsr(shell(), File(real, LoaderELF()),
+			Link(ld, "/"+real))},
+		{Name: "interp_large_valid_header", Entries: with(large)},
+	})
 }
 
 // bootCatalog returns the /boot and shortcut-link fixtures. Each has a

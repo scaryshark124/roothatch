@@ -24,6 +24,12 @@
   root as `symlink_escape` at that initrd path, immediately before the
   unchanged `initrd_missing` for the same version. The initrd is never
   followed and the kernel stays counted.
+- `check` now reads the ELF header of a regular in-root interpreter through the
+  same pinned descriptor: a non-ELF, malformed-ident or truncated header is
+  `interp_elf_invalid`, and a valid header that is not ELF64 little-endian
+  x86-64 is `interp_arch_unsupported`, both at the PT_INTERP path. An
+  unreadable interpreter is now `read_error`. This is a header-level check
+  only, not a verdict that the loader works.
 - Added `roothatch check --json <dir>`: the same report as one JSON document
   (`schema_version` 1, `result` `pass`/`findings`, `findings` of
   `code`/`path`/`detail`, `[]` when empty), with unchanged exit codes. Usage

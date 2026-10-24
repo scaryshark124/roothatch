@@ -494,3 +494,138 @@ func TestBinaryJSONOutputFailure(t *testing.T) {
 		}
 	}
 }
+
+// runBothModes runs the compiled binary on root in text and --json modes and
+// checks the exact exit, empty stderr, exact ordered (code, path) pairs, that
+// the text finding block equals the JSON findings in order, and the verdict.
+// It returns the JSON findings.
+func runBothModes(t *testing.T, bin, root string, want []pt.FindingPair) []jsonFinding {
+	t.Helper()
+	wantCode, wantVerdict, wantResult := 0, "PASS: ", "pass"
+	if len(want) > 0 {
+		wantCode, wantVerdict, wantResult = 3, "FAIL: ", "findings"
+	}
+	code, text, stderr := runBinary(t, bin, "check", root)
+	if code != wantCode || stderr != "" {
+		t.Errorf("text: exit %d stderr %q; want %d and empty stderr", code, stderr, wantCode)
+	}
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	var block []string
+	for _, l := range lines {
+		if strings.HasPrefix(l, "FAIL: ") || strings.HasPrefix(l, "PASS: ") ||
+			strings.HasPrefix(l, "ok: ") || strings.HasPrefix(l, "note: ") {
+			continue
+		}
+		block = append(block, l)
+	}
+	code, js, stderr := runBinary(t, bin, "check", "--json", root)
+	if code != wantCode || stderr != "" {
+		t.Errorf("json: exit %d stderr %q; want %d and empty stderr", code, stderr, wantCode)
+	}
+	r := checkJSONDocument(t, js)
+	gotP := []pt.FindingPair{}
+	rendered := []string{}
+	for _, f := range r.Findings {
+		gotP = append(gotP, pt.FindingPair{Code: f.Code, Path: f.Path})
+		rendered = append(rendered, f.Code+": "+f.Path+": "+f.Detail)
+	}
+	if !reflect.DeepEqual(gotP, append([]pt.FindingPair{}, want...)) {
+		t.Errorf("json (code, path) = %v; want %v\n%s", gotP, want, js)
+	}
+	if !reflect.DeepEqual(append([]string{}, block...), rendered) {
+		t.Errorf("text finding block = %q; want JSON findings in order %q", block, rendered)
+	}
+	if !strings.HasPrefix(lines[len(lines)-1], wantVerdict) || r.Result != wantResult {
+		t.Errorf("verdict text %q json %q; want %q and %q", lines[len(lines)-1], r.Result, wantVerdict, wantResult)
+	}
+	if strings.Contains(text+js, root) {
+		t.Errorf("output leaks host root path")
+	}
+	return r.Findings
+}
+
+// TestBinaryInterpHeader runs the compiled binary in text and --json modes on
+// every interpreter header fixture plus the static-shell control, checking
+// exact ordered findings, exit, stderr and an unchanged whole-sandbox manifest.
+func TestBinaryInterpHeader(t *testing.T) {
+	bin := buildBinary(t)
+	fxs := pt.InterpCatalog()
+	for _, fx := range pt.Catalog() {
+		if fx.Name == "static_shell" {
+			fxs = append(fxs, fx)
+		}
+	}
+	if len(fxs) != 14 {
+		t.Fatalf("got %d fixtures; want 13 interpreter fixtures plus static_shell", len(fxs))
+	}
+	for _, fx := range fxs {
+		t.Run(fx.Name, func(t *testing.T) {
+			sandbox := t.TempDir()
+			root, err := pt.BuildFixture(sandbox, fx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := pt.Digest(sandbox)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := runBothModes(t, bin, root, fx.Findings)
+			for _, f := range got {
+				if !strings.Contains(f.Detail, "header-level check") || !strings.Contains(f.Detail, "not a verdict that the loader works") {
+					t.Errorf("detail lacks header-level disclaimer: %q", f.Detail)
+				}
+			}
+			if after, err := pt.Digest(sandbox); err != nil || after != before {
+				t.Errorf("manifest changed (%v):\nbefore:\n%s\nafter:\n%s", err, before, after)
+			}
+		})
+	}
+}
+
+// TestBinaryInterpUnreadable makes the regular interpreter unreadable: both
+// modes report exactly read_error at the PT_INTERP path and leave the sandbox
+// (including the loader's lstat metadata) unchanged.
+func TestBinaryInterpUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not deny root")
+	}
+	bin := buildBinary(t)
+	var fx pt.Fixture
+	for _, f := range pt.Catalog() {
+		if f.Name == "healthy_merged_usr" {
+			fx = f
+		}
+	}
+	sandbox := t.TempDir()
+	root, err := pt.BuildFixture(sandbox, fx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(root, "usr/lib64/ld-linux-x86-64.so.2")
+	before, err := pt.Digest(sandbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(ld, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ld, 0o755) })
+	pre, err := os.Lstat(ld)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runBothModes(t, bin, root, []pt.FindingPair{{Code: "read_error", Path: pt.Loader}})
+	if len(got) == 1 && !strings.HasPrefix(got[0].Detail, "cannot read: ") {
+		t.Errorf("detail = %q; want \"cannot read: \" prefix", got[0].Detail)
+	}
+	post, err := os.Lstat(ld)
+	if err != nil || post.Mode() != pre.Mode() || post.Size() != pre.Size() || !post.ModTime().Equal(pre.ModTime()) {
+		t.Errorf("loader metadata changed: %v (%v); want %v", post, err, pre)
+	}
+	if err := os.Chmod(ld, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := pt.Digest(sandbox); err != nil || after != before {
+		t.Errorf("manifest changed (%v):\nbefore:\n%s\nafter:\n%s", err, before, after)
+	}
+}

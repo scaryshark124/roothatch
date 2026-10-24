@@ -357,7 +357,7 @@ func TestEscapeNeverReadsHost(t *testing.T) {
 func healthyWith(extra ...pt.Entry) []pt.Entry {
 	return append([]pt.Entry{pt.Link("bin", "usr/bin"), pt.Link("lib64", "usr/lib64"),
 		pt.File("usr/bin/sh", pt.ELF(pt.EMX8664, pt.Loader)),
-		pt.File("usr/lib64/ld-linux-x86-64.so.2", []byte("loader"))}, extra...)
+		pt.File("usr/lib64/ld-linux-x86-64.so.2", pt.LoaderELF())}, extra...)
 }
 
 // TestBootEscapeNeverReadsHost points /boot at an outside directory holding a
@@ -550,7 +550,7 @@ func TestMalformedELF(t *testing.T) {
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {
 			root := build(t, append([]pt.Entry{pt.Link("bin", "usr/bin"), pt.File("usr/bin/sh", data),
-				pt.Link("lib64", "usr/lib64"), pt.File("usr/lib64/ld-linux-x86-64.so.2", []byte("x"))}, pt.BootLayout()...)...)
+				pt.Link("lib64", "usr/lib64"), pt.File("usr/lib64/ld-linux-x86-64.so.2", pt.LoaderELF())}, pt.BootLayout()...)...)
 			r, err := runCheck(t, root)
 			if err != nil {
 				t.Fatal(err)
@@ -576,4 +576,138 @@ func FuzzShellBytes(f *testing.F) {
 			t.Fatal(err)
 		}
 	})
+}
+
+// interpNoteWant is the suffix of every interpreter header finding.
+const interpNoteWant = " (header-level check of the interpreter only; not a verdict that the loader works)"
+
+// TestInterpHeaderDetails pins the finding path (the PT_INTERP string, not the
+// resolved target) and the exact header-level detail of every interpreter
+// header fixture, and that the PASS controls report the interpreter.
+func TestInterpHeaderDetails(t *testing.T) {
+	want := map[string][]Finding{
+		"interp_elf_text":              {{"interp_elf_invalid", pt.Loader, "not an ELF file" + interpNoteWant}},
+		"interp_elf_empty":             {{"interp_elf_invalid", pt.Loader, "not an ELF file" + interpNoteWant}},
+		"interp_elf_truncated_elf64":   {{"interp_elf_invalid", pt.Loader, "truncated ELF64 header (63 bytes; want 64)" + interpNoteWant}},
+		"interp_elf_bad_class":         {{"interp_elf_invalid", pt.Loader, "invalid ELF class 3" + interpNoteWant}},
+		"interp_elf_bad_data":          {{"interp_elf_invalid", pt.Loader, "invalid ELF data encoding 3" + interpNoteWant}},
+		"interp_elf_bad_ident_version": {{"interp_elf_invalid", pt.Loader, "unsupported ELF identification version 2" + interpNoteWant}},
+		"interp_elf_truncated_elf32":   {{"interp_elf_invalid", pt.Loader, "truncated ELF32 header (51 bytes; want 52)" + interpNoteWant}},
+		"interp_arch_aarch64": {{"interp_arch_unsupported", pt.Loader,
+			"interpreter is ELF64 little-endian machine 183 (AArch64); want ELF64 little-endian x86-64 (62)" + interpNoteWant}},
+		"interp_arch_elf32_i386": {{"interp_arch_unsupported", pt.Loader,
+			"interpreter is ELF32 little-endian machine 3 (i386); want ELF64 little-endian x86-64 (62)" + interpNoteWant}},
+		"interp_arch_elf64_big_endian": {{"interp_arch_unsupported", pt.Loader,
+			"interpreter is ELF64 big-endian machine 62 (x86-64); want ELF64 little-endian x86-64 (62)" + interpNoteWant}},
+		"interp_link_relative_in_tree": nil,
+		"interp_link_absolute_in_tree": nil,
+		"interp_large_valid_header":    nil,
+	}
+	seen := 0
+	for _, fx := range pt.InterpCatalog() {
+		w, ok := want[fx.Name]
+		if !ok {
+			t.Errorf("fixture %s has no pinned expectation", fx.Name)
+			continue
+		}
+		seen++
+		t.Run(fx.Name, func(t *testing.T) {
+			root, err := pt.BuildFixture(t.TempDir(), fx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fx.Name == "interp_large_valid_header" {
+				fi, err := os.Stat(filepath.Join(root, "usr/lib64/ld-linux-x86-64.so.2"))
+				if err != nil || fi.Size() != pt.LargeLoaderSize || fi.Size() <= elfPrefix {
+					t.Fatalf("large loader size = %v (%v); want %d > %d", fi, err, pt.LargeLoaderSize, elfPrefix)
+				}
+			}
+			r, err := runCheck(t, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(r.Findings, w) {
+				t.Errorf("findings = %#v\nwant %#v", r.Findings, w)
+			}
+			if r.Interp != pt.Loader || r.Static {
+				t.Errorf("Interp = %q Static = %v; want %q, false", r.Interp, r.Static, pt.Loader)
+			}
+		})
+	}
+	if seen != len(want) {
+		t.Errorf("InterpCatalog has %d of %d pinned fixtures", seen, len(want))
+	}
+}
+
+// TestInterpUnreadable reports read_error at the PT_INTERP path when the
+// regular interpreter cannot be read; nothing else is reported.
+func TestInterpUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not deny root")
+	}
+	root := build(t, healthyWith(pt.BootLayout()...)...)
+	ld := filepath.Join(root, "usr/lib64/ld-linux-x86-64.so.2")
+	if err := os.Chmod(ld, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ld, 0o755) })
+	r, err := runCheck(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Findings) != 1 || r.Findings[0].Code != "read_error" || r.Findings[0].Path != pt.Loader ||
+		!strings.HasPrefix(r.Findings[0].Detail, "cannot read: ") {
+		t.Errorf("findings = %#v; want one read_error at %s with \"cannot read: \" detail", r.Findings, pt.Loader)
+	}
+}
+
+// TestInterpHeaderBoundary pins the helper's narrow boundary: only ident,
+// class-specific header length and e_machine matter. Other header fields,
+// even hostile table offsets/counts, and trailing bytes are ignored.
+func TestInterpHeaderBoundary(t *testing.T) {
+	le := binary.LittleEndian
+	ok := func(fn func(b []byte) []byte) []byte {
+		return fn(pt.Header(pt.ELFClass64, pt.ELFDataLSB, pt.EMX8664))
+	}
+	for name, b := range map[string][]byte{
+		"bare header":       ok(func(b []byte) []byte { return b }),
+		"e_type ET_REL":     ok(func(b []byte) []byte { le.PutUint16(b[16:], 1); return b }),
+		"e_version 0":       ok(func(b []byte) []byte { le.PutUint32(b[20:], 0); return b }),
+		"OS ABI 97":         ok(func(b []byte) []byte { b[7] = 97; return b }),
+		"huge phoff/phnum":  ok(func(b []byte) []byte { le.PutUint64(b[32:], ^uint64(0)); le.PutUint16(b[56:], 0xffff); return b }),
+		"huge shoff/shnum":  ok(func(b []byte) []byte { le.PutUint64(b[40:], ^uint64(0)); le.PutUint16(b[60:], 0xffff); return b }),
+		"trailing bytes":    ok(func(b []byte) []byte { return append(b, make([]byte, 4096)...) }),
+		"full ELF64 loader": pt.LoaderELF(),
+	} {
+		if p := interpHeader(b); p != nil {
+			t.Errorf("%s: %+v; want pass", name, p)
+		}
+	}
+	for name, tc := range map[string]struct {
+		b    []byte
+		code string
+	}{
+		"15 bytes":               {pt.Header(pt.ELFClass64, pt.ELFDataLSB, pt.EMX8664)[:15], "interp_elf_invalid"},
+		"16 bytes ELF64":         {pt.Header(pt.ELFClass64, pt.ELFDataLSB, pt.EMX8664)[:16], "interp_elf_invalid"},
+		"bad magic":              {ok(func(b []byte) []byte { b[3] = 'X'; return b }), "interp_elf_invalid"},
+		"class 0":                {ok(func(b []byte) []byte { b[4] = 0; return b }), "interp_elf_invalid"},
+		"data 0":                 {ok(func(b []byte) []byte { b[5] = 0; return b }), "interp_elf_invalid"},
+		"ELF32 BE truncated":     {pt.Header(pt.ELFClass32, pt.ELFDataMSB, pt.EMX8664)[:51], "interp_elf_invalid"},
+		"ELF32 full x86-64":      {pt.Header(pt.ELFClass32, pt.ELFDataLSB, pt.EMX8664), "interp_arch_unsupported"},
+		"ELF32 BE MIPS":          {pt.Header(pt.ELFClass32, pt.ELFDataMSB, 8), "interp_arch_unsupported"},
+		"ELF64 LE unknown 65535": {pt.Header(pt.ELFClass64, pt.ELFDataLSB, 0xffff), "interp_arch_unsupported"},
+	} {
+		p := interpHeader(tc.b)
+		if p == nil || p.code != tc.code || !strings.HasSuffix(p.detail, interpNoteWant) {
+			t.Errorf("%s: %+v; want %s with header-level note", name, p, tc.code)
+		}
+	}
+	if p := interpHeader(pt.Header(pt.ELFClass32, pt.ELFDataMSB, 8)); p == nil ||
+		!strings.HasPrefix(p.detail, "interpreter is ELF32 big-endian machine 8 (MIPS);") {
+		t.Errorf("big-endian e_machine not decoded in declared order: %+v", p)
+	}
+	if p := interpHeader(pt.Header(pt.ELFClass64, pt.ELFDataLSB, 0xffff)); p == nil ||
+		!strings.HasPrefix(p.detail, "interpreter is ELF64 little-endian machine 65535 (unknown);") {
+		t.Errorf("unknown machine detail: %+v", p)
+	}
 }

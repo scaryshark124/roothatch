@@ -112,3 +112,53 @@ func parseELF(b []byte, size int64) (interp string, hasInterp bool, p *elfProble
 	}
 	return interp, hasInterp, nil
 }
+
+const interpNote = " (header-level check of the interpreter only; not a verdict that the loader works)"
+
+// interpHeader checks only the ELF file header of the interpreter prefix b:
+// identification bytes, the full class-specific header length, and e_machine
+// in the declared byte order. It never reads, seeks or allocates from header
+// offsets or sizes and never inspects program headers. ELF64 little-endian
+// x86-64 passes; anything else is a finding.
+func interpHeader(b []byte) *elfProblem {
+	bad := func(format string, args ...any) *elfProblem {
+		return &elfProblem{"interp_elf_invalid", fmt.Sprintf(format, args...) + interpNote}
+	}
+	if len(b) < 16 || string(b[:4]) != "\x7fELF" {
+		return bad("not an ELF file")
+	}
+	class, data := b[4], b[5]
+	switch {
+	case class != 1 && class != 2:
+		return bad("invalid ELF class %d", class)
+	case data != 1 && data != 2:
+		return bad("invalid ELF data encoding %d", data)
+	case b[6] != 1:
+		return bad("unsupported ELF identification version %d", b[6])
+	}
+	className, size := "ELF32", 52
+	if class == 2 {
+		className, size = "ELF64", 64
+	}
+	if len(b) < size {
+		return bad("truncated %s header (%d bytes; want %d)", className, len(b), size)
+	}
+	var bo binary.ByteOrder = binary.LittleEndian
+	order := "little-endian"
+	if data == 2 {
+		bo, order = binary.BigEndian, "big-endian"
+	}
+	m := bo.Uint16(b[18:])
+	if class == 2 && data == 1 && m == emX8664 {
+		return nil
+	}
+	name := machineNames[m]
+	switch {
+	case m == emX8664:
+		name = "x86-64"
+	case name == "":
+		name = "unknown"
+	}
+	return &elfProblem{"interp_arch_unsupported", fmt.Sprintf(
+		"interpreter is %s %s machine %d (%s); want ELF64 little-endian x86-64 (62)", className, order, m, name) + interpNote}
+}

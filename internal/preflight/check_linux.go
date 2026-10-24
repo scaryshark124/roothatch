@@ -284,8 +284,18 @@ func checkShell(rootfd int, r *Report) {
 		return
 	}
 	r.Interp = clean(interp)
-	if ifd, _, ok := locate(rootfd, interp, interpRole, r); ok {
+	if ifd, ist, ok := locate(rootfd, interp, interpRole, r); ok {
+		// Read the interpreter through the descriptor locate pinned; it is
+		// closed before either result is handled.
+		data, _, err := readPinned(ifd, ist)
 		syscall.Close(ifd)
+		if err != nil {
+			r.add("read_error", interp, "cannot read: "+err.Error())
+			return
+		}
+		if prob := interpHeader(data); prob != nil {
+			r.add(prob.code, interp, prob.detail)
+		}
 	}
 }
 
