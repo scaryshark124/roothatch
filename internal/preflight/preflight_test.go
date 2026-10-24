@@ -228,6 +228,93 @@ func TestKernelEscapeDetails(t *testing.T) {
 	}
 }
 
+// TestInitrdEscapeDetails pins the initrd escape finding's path and resolver
+// detail, that initrd_missing keeps its existing detail built from the same
+// failure, that the kernel stays counted, and that both the relative and the
+// absolute "/../../<host path>" links genuinely reach their host sentinels.
+func TestInitrdEscapeDetails(t *testing.T) {
+	cat := map[string]pt.Fixture{}
+	for _, fx := range pt.Catalog() {
+		cat[fx.Name] = fx
+	}
+	v := pt.KernelVersion
+	missing := func(ver, detail string) string {
+		return "kernel version " + ver + " has no matching initrd.img-" + ver + " regular file inside the root: " + detail +
+			" (Debian naming convention consistency check; not a bootability verdict)"
+	}
+	escape := func(ver, target string) string {
+		return `symlink /boot/initrd.img-` + ver + ` -> "` + target + `" leads outside the root; not followed`
+	}
+	for _, tc := range []struct {
+		name string
+		want []Finding
+		kern []string
+	}{
+		{"boot_initrd_escape", []Finding{
+			{"symlink_escape", "/boot/initrd.img-" + v, escape(v, "../../outside-initrd")},
+			{"initrd_missing", "/boot/initrd.img-" + v, missing(v, escape(v, "../../outside-initrd"))},
+		}, []string{v}},
+		{"boot_initrd_escape_with_valid_pair", []Finding{
+			{"symlink_escape", "/boot/initrd.img-6.9.0-esc", escape("6.9.0-esc", "../../sentinel-initrd")},
+			{"initrd_missing", "/boot/initrd.img-6.9.0-esc", missing("6.9.0-esc", escape("6.9.0-esc", "../../sentinel-initrd"))},
+		}, []string{v, "6.9.0-esc"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, err := pt.BuildFixture(t.TempDir(), cat[tc.name])
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := runCheck(t, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(r.Findings, tc.want) {
+				t.Errorf("findings = %#v\nwant %#v", r.Findings, tc.want)
+			}
+			if !reflect.DeepEqual(append([]string{}, r.Kernels...), tc.kern) {
+				t.Errorf("Kernels = %v; want %v", r.Kernels, tc.kern)
+			}
+		})
+	}
+	sandbox := t.TempDir()
+	root, err := pt.BuildFixture(sandbox, cat["boot_two_initrd_escapes"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := runCheck(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Findings) != 4 || !strings.HasPrefix(r.Findings[0].Detail, `symlink /boot/initrd.img-7.0-abs -> "/../../`) ||
+		!strings.HasSuffix(r.Findings[0].Detail, `/y" leads outside the root; not followed`) ||
+		r.Findings[1].Detail != missing("7.0-abs", r.Findings[0].Detail) ||
+		r.Findings[2].Detail != escape("9.0-rel", "../../x") ||
+		r.Findings[3].Detail != missing("9.0-rel", escape("9.0-rel", "../../x")) {
+		t.Errorf("findings = %#v", r.Findings)
+	}
+	if !reflect.DeepEqual(append([]string{}, r.Kernels...), []string{"7.0-abs", "9.0-rel"}) {
+		t.Errorf("Kernels = %v; want [7.0-abs 9.0-rel]", r.Kernels)
+	}
+	for _, f := range r.Findings {
+		if strings.Contains(f.Detail, "must never be read") {
+			t.Errorf("sentinel content leaked: %+v", f)
+		}
+	}
+	for name, sentinel := range map[string]string{"initrd.img-7.0-abs": "y", "initrd.img-9.0-rel": "x"} {
+		host, err := os.Stat(filepath.Join(root, "boot", name))
+		if err != nil {
+			t.Fatalf("host resolution of %s: %v", name, err)
+		}
+		want, err := os.Stat(filepath.Join(sandbox, sentinel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(host, want) {
+			t.Errorf("%s does not reach its outside sentinel on the host; fixture is not a genuine escape", name)
+		}
+	}
+}
+
 func TestRootErrors(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(file, nil, 0o644); err != nil {

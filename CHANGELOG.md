@@ -20,6 +20,10 @@
   silently. It is still never followed or counted as a kernel; `kernel_missing`
   is still reported when no valid kernel remains. Escaping initrds are still
   reported as `initrd_missing`.
+- `check` now also reports a `/boot/initrd.img-<version>` link that leaves the
+  root as `symlink_escape` at that initrd path, immediately before the
+  unchanged `initrd_missing` for the same version. The initrd is never
+  followed and the kernel stays counted.
 - Added `roothatch check --json <dir>`: the same report as one JSON document
   (`schema_version` 1, `result` `pass`/`findings`, `findings` of
   `code`/`path`/`detail`, `[]` when empty), with unchanged exit codes. Usage

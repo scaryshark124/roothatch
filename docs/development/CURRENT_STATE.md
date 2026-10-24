@@ -56,6 +56,17 @@ comparison of the previous and new binaries on 63 synthetic fixtures, where only
 the three escaping-kernel fixtures changed; see the
 [RH-M06 receipt](receipts/RH-M06-KERNEL-ESCAPE.md).
 
+RH-M07 does the same for initrds: when a valid kernel's matching
+`/boot/initrd.img-<version>` link leads outside the root, `check` now reports
+`symlink_escape` at that initrd path immediately before the unchanged
+`initrd_missing` for that version. The initrd is never followed and the kernel is
+still counted. This replaces the RH-M06 statement that escaping initrds keep their
+earlier behavior. Proof: independent functional review (round 1 PASS) and parent
+comparison of the previous and new binaries on 67 synthetic fixtures, where only
+the three escaping-initrd fixtures changed and removing the added findings
+reproduced the previous output's findings exactly; see the
+[RH-M07 receipt](receipts/RH-M07-INITRD-ESCAPE.md).
+
 Implemented commands are `help`, `version` and `check` (with `--json`). Native entry, doctor,
 bootstrap, storage and VM functionality are not delivered. RH-M2-01 stays
 unchecked: `check` covers its synthetic-root diagnostics, but the row remains open

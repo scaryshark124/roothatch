@@ -434,6 +434,10 @@ func checkBoot(rootfd int, r *Report) {
 		r.Kernels = append(r.Kernels, clean(ver))
 		ip := BootDir + "/" + initrdPrefix + ver
 		if _, f := regularIn(rootfd, ip); f != nil {
+			if f.kind == failEscape {
+				// Reported at the in-root initrd path; never followed.
+				r.add("symlink_escape", ip, f.detail)
+			}
 			r.add("initrd_missing", ip, "kernel version "+clean(ver)+" has no matching initrd.img-"+clean(ver)+
 				" regular file inside the root: "+f.detail+debianNote)
 		}

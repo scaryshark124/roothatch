@@ -293,13 +293,29 @@ func readSentinel(t *testing.T, p string) sentinelState {
 // lstat manifest of the root and unchanged outside-root sentinel files that
 // the escaping links genuinely reach on the host.
 func TestBinaryKernelEscape(t *testing.T) {
+	runBinaryEscapeFixtures(t, "boot/vmlinuz-", "boot_kernel_escape", "boot_kernel_escape_with_valid_pair",
+		"boot_two_kernel_escapes_with_valid_pair", "boot_kernel_link_in_tree", "boot_kernel_link_in_tree_relative")
+}
+
+// TestBinaryInitrdEscape applies the same real-binary checks to the
+// escaping-initrd fixtures (symlink_escape then initrd_missing per version)
+// and their in-tree initrd link controls.
+func TestBinaryInitrdEscape(t *testing.T) {
+	runBinaryEscapeFixtures(t, "boot/initrd.img-", "boot_initrd_escape", "boot_initrd_escape_with_valid_pair",
+		"boot_two_initrd_escapes", "boot_initrd_link_in_tree", "boot_initrd_link_in_tree_relative")
+}
+
+// runBinaryEscapeFixtures runs the named Catalog() fixtures through the
+// compiled binary; linkPrefix selects the in-root links (e.g. "boot/vmlinuz-")
+// that must genuinely reach the outside sentinels on the host.
+func runBinaryEscapeFixtures(t *testing.T, linkPrefix string, names ...string) {
+	t.Helper()
 	bin := buildBinary(t)
 	cat := map[string]pt.Fixture{}
 	for _, fx := range pt.Catalog() {
 		cat[fx.Name] = fx
 	}
-	for _, name := range []string{"boot_kernel_escape", "boot_kernel_escape_with_valid_pair",
-		"boot_two_kernel_escapes_with_valid_pair", "boot_kernel_link_in_tree", "boot_kernel_link_in_tree_relative"} {
+	for _, name := range names {
 		fx, ok := cat[name]
 		if !ok {
 			t.Fatalf("fixture %s not in Catalog()", name)
@@ -319,13 +335,13 @@ func TestBinaryKernelEscape(t *testing.T) {
 				p := filepath.Join(sandbox, filepath.FromSlash(e.Path))
 				sentinels[p] = readSentinel(t, p)
 			}
-			// Each escaping kernel link must reach a sentinel on the host, so
+			// Each escaping link must reach a sentinel on the host, so
 			// the test proves the binary refused a real outside file.
 			reached := 0
 			for _, e := range fx.Entries {
 				// In-tree controls may use absolute targets that only resolve
 				// beneath the root, so only escaping fixtures are host-checked.
-				if !escaping || e.Kind != pt.KindLink || !strings.HasPrefix(e.Path, "boot/vmlinuz-") {
+				if !escaping || e.Kind != pt.KindLink || !strings.HasPrefix(e.Path, linkPrefix) {
 					continue
 				}
 				hi, err := os.Stat(filepath.Join(root, filepath.FromSlash(e.Path)))
