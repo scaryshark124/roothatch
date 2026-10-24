@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	pt "github.com/scaryshark124/roothatch/internal/preflight/preflighttest"
 )
@@ -136,5 +139,203 @@ func TestBinaryUsage(t *testing.T) {
 	bin := buildBinary(t)
 	if code, stdout, stderr := runBinary(t, bin, "check"); code != 2 || stdout != "" || stderr == "" {
 		t.Errorf("check without dir: exit %d stdout %q stderr %q; want 2", code, stdout, stderr)
+	}
+}
+
+type jsonFinding struct {
+	Code   string `json:"code"`
+	Path   string `json:"path"`
+	Detail string `json:"detail"`
+}
+
+type jsonReport struct {
+	SchemaVersion int           `json:"schema_version"`
+	Result        string        `json:"result"`
+	Findings      []jsonFinding `json:"findings"`
+}
+
+// checkJSONDocument verifies stdout is exactly one strict JSON report with
+// exactly the documented keys, and returns it.
+func checkJSONDocument(t *testing.T, stdout string) jsonReport {
+	t.Helper()
+	out := []byte(stdout)
+	if !json.Valid(out) || !utf8.Valid(out) {
+		t.Fatalf("stdout is not valid UTF-8 JSON: %q", stdout)
+	}
+	dec := json.NewDecoder(bytes.NewReader(out))
+	dec.DisallowUnknownFields()
+	var r jsonReport
+	if err := dec.Decode(&r); err != nil {
+		t.Fatalf("strict decode: %v\n%q", err, stdout)
+	}
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		t.Fatalf("second decode = %v; want io.EOF\n%q", err, stdout)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(out, &top); err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 3 || top["schema_version"] == nil || top["result"] == nil || top["findings"] == nil {
+		t.Fatalf("top-level keys = %v; want exactly schema_version, result, findings", top)
+	}
+	if string(top["schema_version"]) != "1" {
+		t.Errorf("schema_version = %s; want the number 1", top["schema_version"])
+	}
+	var fs []map[string]json.RawMessage
+	if err := json.Unmarshal(top["findings"], &fs); err != nil || fs == nil {
+		t.Fatalf("findings = %s (%v); want an array", top["findings"], err)
+	}
+	for i, f := range fs {
+		if len(f) != 3 || f["code"] == nil || f["path"] == nil || f["detail"] == nil {
+			t.Errorf("finding %d keys = %v; want exactly code, path, detail", i, f)
+		}
+	}
+	if len(r.Findings) == 0 && string(bytes.TrimSpace(top["findings"])) != "[]" {
+		t.Errorf("empty findings = %s; want []", top["findings"])
+	}
+	for _, f := range r.Findings {
+		for _, s := range []string{f.Code, f.Path, f.Detail} {
+			if !utf8.ValidString(s) {
+				t.Errorf("decoded string not valid UTF-8: %q", s)
+			}
+		}
+	}
+	return r
+}
+
+func codeCounts(codes []string) map[string]int {
+	m := map[string]int{}
+	for _, c := range codes {
+		m[c]++
+	}
+	return m
+}
+
+// TestBinaryCatalogJSON runs the compiled binary as "check --json <root>"
+// against the complete catalog plus the escaping fixtures, checking the strict
+// single-document schema, result, exit status, finding-code multiset, empty
+// stderr and an unchanged lstat manifest of the whole sandbox.
+func TestBinaryCatalogJSON(t *testing.T) {
+	bin := buildBinary(t)
+	catalog := pt.Catalog()
+	if len(catalog) == 0 || len(pt.EscapeCatalog()) == 0 {
+		t.Fatal("empty catalog")
+	}
+	for _, fx := range append(catalog, pt.EscapeCatalog()...) {
+		t.Run(fx.Name, func(t *testing.T) {
+			sandbox := t.TempDir()
+			root := filepath.Join(sandbox, "root")
+			if err := os.Mkdir(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := pt.Build(root, fx.Entries...); err != nil {
+				t.Fatal(err)
+			}
+			before, err := pt.Digest(sandbox)
+			if err != nil {
+				t.Fatal(err)
+			}
+			code, stdout, stderr := runBinary(t, bin, "check", "--json", root)
+			after, err := pt.Digest(sandbox)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if before != after {
+				t.Errorf("manifest changed:\nbefore:\n%s\nafter:\n%s", before, after)
+			}
+			if stderr != "" {
+				t.Errorf("stderr = %q; want empty", stderr)
+			}
+			wantCode, wantResult := 0, "pass"
+			if len(fx.Want) > 0 {
+				wantCode, wantResult = 3, "findings"
+			}
+			if code != wantCode {
+				t.Errorf("exit = %d; want %d; stdout %q", code, wantCode, stdout)
+			}
+			r := checkJSONDocument(t, stdout)
+			if r.SchemaVersion != 1 || r.Result != wantResult {
+				t.Errorf("schema_version %d result %q; want 1 %q", r.SchemaVersion, r.Result, wantResult)
+			}
+			var got []string
+			for _, f := range r.Findings {
+				got = append(got, f.Code)
+			}
+			if !reflect.DeepEqual(codeCounts(got), codeCounts(fx.Want)) {
+				t.Errorf("finding codes = %v; want multiset %v\n%s", got, fx.Want, stdout)
+			}
+			if strings.Contains(stdout, root) {
+				t.Errorf("output leaks host root path: %q", stdout)
+			}
+		})
+	}
+}
+
+// TestBinaryJSONUsage covers rejected --json argument forms and unusable
+// directories: exit 2, empty stdout, explanation on stderr.
+func TestBinaryJSONUsage(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"check", dir, "--json"},
+		{"check", "--json"},
+		{"check", "--json", dir, dir},
+		{"check", "--json", "--json", dir},
+		{"check", "--JSON", dir},
+		{"check", "-json", dir},
+		{"check", "--json=true", dir},
+		{"check", "--json", filepath.Join(dir, "missing")},
+		{"check", "--json", file},
+	} {
+		code, stdout, stderr := runBinary(t, bin, args...)
+		if code != 2 || stdout != "" || stderr == "" {
+			t.Errorf("%q: exit %d stdout %q stderr %q; want 2, empty stdout, nonempty stderr", args, code, stdout, stderr)
+		}
+	}
+}
+
+// TestBinaryJSONOutputFailure writes JSON to /dev/full: an output failure
+// must exit 1 for both a passing and a findings fixture.
+func TestBinaryJSONOutputFailure(t *testing.T) {
+	if _, err := os.Stat("/dev/full"); errors.Is(err, os.ErrNotExist) {
+		t.Skip("/dev/full is absent")
+	}
+	bin := buildBinary(t)
+	cat := map[string]pt.Fixture{}
+	for _, fx := range pt.Catalog() {
+		cat[fx.Name] = fx
+	}
+	for _, name := range []string{"healthy_merged_usr", "missing_shell"} {
+		root := filepath.Join(t.TempDir(), "root")
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := pt.Build(root, cat[name].Entries...); err != nil {
+			t.Fatal(err)
+		}
+		full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		var stderr bytes.Buffer
+		cmd := exec.CommandContext(ctx, bin, "check", "--json", root)
+		cmd.Stdout, cmd.Stderr = full, &stderr
+		cmd.Env = []string{"LC_ALL=C"}
+		err = cmd.Run()
+		timedOut := ctx.Err() != nil
+		cancel()
+		full.Close()
+		if timedOut {
+			t.Fatalf("%s: binary did not finish within 20s", name)
+		}
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			t.Errorf("%s: run error %v; want exit 1 (stderr %q)", name, err, stderr.String())
+		}
 	}
 }

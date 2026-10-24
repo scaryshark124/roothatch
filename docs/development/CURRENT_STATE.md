@@ -35,7 +35,17 @@ finding-code matching and unchanged trees; see the
 [RH-M04 receipt](receipts/RH-M04-BOOT-CHECK.md). Functional acceptance only, not a
 security PASS.
 
-Implemented commands are `help`, `version` and `check`. Native entry, doctor,
+RH-M05 adds `roothatch check --json <dir>`: the same report as text mode,
+serialized as one JSON document `{"schema_version": 1, "result": "pass" |
+"findings", "findings": [{"code", "path", "detail"}]}` with `[]` on a pass and
+the existing sanitized path/detail strings. Exit codes are unchanged; usage
+errors exit 2 with empty stdout. Plain `check <dir>` output is byte-for-byte
+unchanged. `"pass"` means only that the current limited checks passed. Proof:
+independent functional review (round 1 PASS) and parent acceptance of the
+compiled binary on 60 synthetic fixtures, comparing text output with the
+previous release; see the [RH-M05 receipt](receipts/RH-M05-CHECK-JSON.md).
+
+Implemented commands are `help`, `version` and `check` (with `--json`). Native entry, doctor,
 bootstrap, storage and VM functionality are not delivered. RH-M2-01 stays
 unchecked: `check` covers its synthetic-root diagnostics, but the row remains open
 while the M1 target/lifecycle design is held.

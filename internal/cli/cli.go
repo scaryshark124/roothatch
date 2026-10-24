@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -13,6 +14,7 @@ const usage = `Roothatch — Build it. Fix it. Boot it.
 
 Usage: roothatch [help|version]
        roothatch check <dir>
+       roothatch check --json <dir>
 
 check inspects the Linux root tree at <dir> read-only and without privileges.
 It checks only that /bin/sh resolves inside <dir>, is an ELF64 little-endian
@@ -27,6 +29,12 @@ contents are not checked. Symlinks leaving <dir> are reported and never
 followed onto the host.
 Exit status: 0 limited checks passed, 3 findings reported, 2 usage error,
 1 output failure. Passing does not show that <dir> is bootable or healthy.
+
+check --json <dir> runs the same checks and writes one JSON document to stdout:
+{"schema_version": 1, "result": "pass"|"findings", "findings": [{"code",
+"path", "detail"}]}, with the same exit status. "pass" means only that the
+current limited checks passed; it is not a bootability verdict. --json must
+come directly after check; usage errors write nothing to stdout.
 
 Help, version and check are the only implemented commands in this pre-alpha.
 Native entry, repair, image management and VM boot are not implemented.
@@ -68,7 +76,30 @@ func write(stdout, stderr io.Writer, output string, code int) int {
 	return code
 }
 
+// jsonFinding and jsonReport are the schema_version 1 JSON output of
+// "check --json". They carry exactly the documented fields.
+type jsonFinding struct {
+	Code   string `json:"code"`
+	Path   string `json:"path"`
+	Detail string `json:"detail"`
+}
+
+type jsonReport struct {
+	SchemaVersion int           `json:"schema_version"`
+	Result        string        `json:"result"`
+	Findings      []jsonFinding `json:"findings"`
+}
+
 func runCheck(args []string, stdout, stderr io.Writer) int {
+	// The only accepted forms are "check <dir>" and "check --json <dir>".
+	// A bare "check --json" is rejected rather than read as a directory.
+	asJSON := len(args) == 2 && args[0] == "--json"
+	if asJSON {
+		args = args[1:]
+	} else if len(args) == 1 && args[0] == "--json" {
+		fmt.Fprintln(stderr, "roothatch: check --json requires exactly one directory: roothatch check --json <dir>")
+		return 2
+	}
 	if len(args) != 1 {
 		fmt.Fprintln(stderr, "roothatch: check requires exactly one directory: roothatch check <dir>")
 		return 2
@@ -78,6 +109,31 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "roothatch: check: %q is not a usable directory: %v\n", args[0], err)
 		return 2
 	}
+	if asJSON {
+		return writeJSON(report, stdout, stderr)
+	}
+	return writeText(report, stdout, stderr)
+}
+
+// writeJSON serializes report as one JSON document, preserving finding order
+// and the report's sanitized strings. Exit 0 pass, 3 findings, 1 output failure.
+func writeJSON(report preflight.Report, stdout, stderr io.Writer) int {
+	doc := jsonReport{SchemaVersion: 1, Result: "pass", Findings: make([]jsonFinding, 0, len(report.Findings))}
+	for _, f := range report.Findings {
+		doc.Findings = append(doc.Findings, jsonFinding{Code: f.Code, Path: f.Path, Detail: f.Detail})
+	}
+	code := 0
+	if len(doc.Findings) > 0 {
+		doc.Result, code = "findings", 3
+	}
+	if err := json.NewEncoder(stdout).Encode(doc); err != nil {
+		fmt.Fprintln(stderr, "roothatch: cannot write output")
+		return 1
+	}
+	return code
+}
+
+func writeText(report preflight.Report, stdout, stderr io.Writer) int {
 	var b strings.Builder
 	for _, f := range report.Findings {
 		fmt.Fprintf(&b, "%s: %s: %s\n", f.Code, f.Path, f.Detail)

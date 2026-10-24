@@ -15,6 +15,10 @@
   resolve inside the root to regular files (`boot_link_broken`,
   `symlink_escape`). Kernel and initrd contents are not read; separate /boot or
   EFI partitions and bootloader configuration are not checked.
+- Added `roothatch check --json <dir>`: the same report as one JSON document
+  (`schema_version` 1, `result` `pass`/`findings`, `findings` of
+  `code`/`path`/`detail`, `[]` when empty), with unchanged exit codes. Usage
+  errors write nothing to stdout. `pass` is not a bootability verdict.
 
 - Selected Apache-2.0, included LICENSE/NOTICE and bound the actual GitHub module.
 - Approved project guidance and Roothatch-specific role bindings; verified native
