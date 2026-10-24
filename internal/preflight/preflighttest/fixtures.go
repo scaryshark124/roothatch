@@ -163,6 +163,46 @@ type Fixture struct {
 	// Shortcuts names the optional root shortcut links (/vmlinuz,
 	// /initrd.img) expected to be present, in check order.
 	Shortcuts []string
+	// Outside entries are created in the sandbox directory that contains
+	// the root (as siblings of "root"); escaping links point at them. They
+	// are synthetic sentinels that must never be read or changed.
+	Outside []Entry
+	// Findings, when non-nil, is the exact expected ordered list of
+	// (code, path) pairs; its codes must equal Want.
+	Findings []FindingPair
+}
+
+// FindingPair is an expected finding code and its sanitized in-root path.
+type FindingPair struct{ Code, Path string }
+
+// SandboxToken in a fixture link target is replaced by BuildFixture with the
+// absolute sandbox path without its leading "/", so "/../../"+SandboxToken+
+// "/x" names the outside sentinel x when resolved on the host.
+const SandboxToken = "@SANDBOX@"
+
+// BuildFixture creates fx beneath sandbox: Outside entries directly in
+// sandbox, and Entries in sandbox/root, which it returns. sandbox must be an
+// absolute path.
+func BuildFixture(sandbox string, fx Fixture) (string, error) {
+	if !filepath.IsAbs(sandbox) {
+		return "", fmt.Errorf("sandbox %q is not absolute", sandbox)
+	}
+	if err := Build(sandbox, fx.Outside...); err != nil {
+		return "", err
+	}
+	root := filepath.Join(sandbox, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		return "", err
+	}
+	tok := strings.TrimPrefix(filepath.ToSlash(sandbox), "/")
+	entries := make([]Entry, len(fx.Entries))
+	for i, e := range fx.Entries {
+		if e.Kind == KindLink {
+			e.Target = strings.ReplaceAll(e.Target, SandboxToken, tok)
+		}
+		entries[i] = e
+	}
+	return root, Build(root, entries...)
 }
 
 // KernelVersion is the version of the synthetic Debian boot layout.
@@ -201,6 +241,11 @@ func loaderFile() Entry {
 }
 
 func shell() Entry { return File("usr/bin/sh", ELF(EMX8664, Loader)) }
+
+// sentinel is a distinctive synthetic outside-root file named name.
+func sentinel(name string) Entry {
+	return File(name, []byte("synthetic outside-root sentinel "+name+"; must never be read\n"))
+}
 
 // Catalog returns every acceptance and robustness fixture.
 func Catalog() []Fixture {
@@ -289,9 +334,26 @@ func bootCatalog() []Fixture {
 		{Name: "boot_kernel_fifo", Entries: healthy(FIFO("boot/vmlinuz-"+v), File("boot/initrd.img-"+v, []byte("i"))),
 			Want: []string{"kernel_missing"}},
 		{Name: "boot_kernel_escape", Entries: healthy(Link("boot/vmlinuz-"+v, "../../outside-kernel"), File("boot/initrd.img-"+v, []byte("i"))),
-			Want: []string{"kernel_missing"}},
+			Outside:  []Entry{sentinel("outside-kernel")},
+			Want:     []string{"symlink_escape", "kernel_missing"},
+			Findings: []FindingPair{{"symlink_escape", "/boot/vmlinuz-" + v}, {"kernel_missing", "/boot"}}},
 		{Name: "boot_kernel_link_in_tree", Entries: healthy(File("opt/k/vmlinuz", []byte("k")), Link("boot/vmlinuz-"+v, "/opt/k/vmlinuz"),
 			File("boot/initrd.img-"+v, []byte("i"))), Kernels: one},
+		// Escaping kernel candidates are reported, never followed and never
+		// counted; a valid pair still satisfies the kernel check.
+		{Name: "boot_kernel_escape_with_valid_pair", Entries: layout(Link("boot/vmlinuz-6.9.0-esc", "../../sentinel")),
+			Outside: []Entry{sentinel("sentinel")}, Want: []string{"symlink_escape"},
+			Findings: []FindingPair{{"symlink_escape", "/boot/vmlinuz-6.9.0-esc"}}, Kernels: one},
+		// Created relative-then-absolute; sorted enumeration reports 7.0 first.
+		{Name: "boot_two_kernel_escapes_with_valid_pair", Entries: layout(
+			Link("boot/vmlinuz-9.0-rel", "../../sentinel-rel"),
+			Link("boot/vmlinuz-7.0-abs", "/../../"+SandboxToken+"/sentinel-abs")),
+			Outside:  []Entry{sentinel("sentinel-rel"), sentinel("sentinel-abs")},
+			Want:     []string{"symlink_escape", "symlink_escape"},
+			Findings: []FindingPair{{"symlink_escape", "/boot/vmlinuz-7.0-abs"}, {"symlink_escape", "/boot/vmlinuz-9.0-rel"}},
+			Kernels:  one},
+		{Name: "boot_kernel_link_in_tree_relative", Entries: healthy(File("opt/k/kernel-image", []byte("k")),
+			Link("boot/vmlinuz-"+v, "../opt/k/kernel-image"), File("boot/initrd.img-"+v, []byte("i"))), Kernels: one},
 		{Name: "boot_vmlinuz_dangling", Entries: layout(Link("vmlinuz", "boot/vmlinuz-9.9.9-absent")),
 			Want: []string{"boot_link_broken"}, Kernels: one, Shortcuts: []string{"/vmlinuz"}},
 		{Name: "boot_vmlinuz_escape", Entries: layout(Link("vmlinuz", "../boot/vmlinuz-"+v)),

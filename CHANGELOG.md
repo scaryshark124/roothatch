@@ -15,6 +15,11 @@
   resolve inside the root to regular files (`boot_link_broken`,
   `symlink_escape`). Kernel and initrd contents are not read; separate /boot or
   EFI partitions and bootloader configuration are not checked.
+- `check` now reports a `/boot/vmlinuz-<version>` candidate whose link leaves
+  the root as `symlink_escape` at that candidate path instead of skipping it
+  silently. It is still never followed or counted as a kernel; `kernel_missing`
+  is still reported when no valid kernel remains. Escaping initrds are still
+  reported as `initrd_missing`.
 - Added `roothatch check --json <dir>`: the same report as one JSON document
   (`schema_version` 1, `result` `pass`/`findings`, `findings` of
   `code`/`path`/`detail`, `[]` when empty), with unchanged exit codes. Usage

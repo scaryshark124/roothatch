@@ -55,11 +55,56 @@ func build(t *testing.T, entries ...pt.Entry) string {
 	return root
 }
 
+// pairs returns the (code, path) pairs of r's findings in report order.
+func pairs(r Report) []pt.FindingPair {
+	out := []pt.FindingPair{}
+	for _, f := range r.Findings {
+		out = append(out, pt.FindingPair{Code: f.Code, Path: f.Path})
+	}
+	return out
+}
+
+// pairCounts is a multiset of (code, path) pairs; duplicates are counted.
+func pairCounts(ps []pt.FindingPair) map[pt.FindingPair]int {
+	m := map[pt.FindingPair]int{}
+	for _, p := range ps {
+		m[p]++
+	}
+	return m
+}
+
+// checkFindingPairs asserts fx.Findings, when set, as an exact multiset and
+// as the exact report order, and that it agrees with fx.Want.
+func checkFindingPairs(t *testing.T, fx pt.Fixture, r Report) {
+	t.Helper()
+	if fx.Findings == nil {
+		return
+	}
+	wantCodes := []string{}
+	for _, p := range fx.Findings {
+		wantCodes = append(wantCodes, p.Code)
+	}
+	if !reflect.DeepEqual(wantCodes, append([]string{}, fx.Want...)) {
+		t.Fatalf("fixture inconsistent: Findings codes %v != Want %v", wantCodes, fx.Want)
+	}
+	got := pairs(r)
+	if !reflect.DeepEqual(pairCounts(got), pairCounts(fx.Findings)) {
+		t.Errorf("(code, path) multiset = %v; want %v (findings %+v)", got, fx.Findings, r.Findings)
+	}
+	if !reflect.DeepEqual(got, fx.Findings) {
+		t.Errorf("(code, path) order = %v; want %v", got, fx.Findings)
+	}
+}
+
 func TestCatalog(t *testing.T) {
 	for _, fx := range pt.Catalog() {
 		t.Run(fx.Name, func(t *testing.T) {
-			root := build(t, fx.Entries...)
-			before, err := pt.Digest(root)
+			sandbox := t.TempDir()
+			root, err := pt.BuildFixture(sandbox, fx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := pt.Digest(sandbox)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -74,6 +119,7 @@ func TestCatalog(t *testing.T) {
 			if got := codes(r); !reflect.DeepEqual(got, want) {
 				t.Errorf("codes = %v; want %v (findings %+v)", got, want, r.Findings)
 			}
+			checkFindingPairs(t, fx, r)
 			if r.Static != fx.Static {
 				t.Errorf("Static = %v; want %v", r.Static, fx.Static)
 			}
@@ -95,7 +141,7 @@ func TestCatalog(t *testing.T) {
 			if len(r.Links) != len(ShortcutLinks) {
 				t.Errorf("Links = %+v; want one status per shortcut %v", r.Links, ShortcutLinks)
 			}
-			after, err := pt.Digest(root)
+			after, err := pt.Digest(sandbox)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -103,6 +149,82 @@ func TestCatalog(t *testing.T) {
 				t.Errorf("fixture tree changed:\nbefore:\n%s\nafter:\n%s", before, after)
 			}
 		})
+	}
+}
+
+// TestKernelEscapeDetails pins the escape finding's path and resolver detail,
+// that an escaping candidate is never counted or given an initrd check, and
+// that kernel_missing keeps its existing detail including the ignored count.
+func TestKernelEscapeDetails(t *testing.T) {
+	cat := map[string]pt.Fixture{}
+	for _, fx := range pt.Catalog() {
+		cat[fx.Name] = fx
+	}
+	v := pt.KernelVersion
+	for _, tc := range []struct {
+		name string
+		want []Finding
+		kern []string
+	}{
+		{"boot_kernel_escape", []Finding{
+			{"symlink_escape", "/boot/vmlinuz-" + v, `symlink /boot/vmlinuz-` + v + ` -> "../../outside-kernel" leads outside the root; not followed`},
+			{"kernel_missing", "/boot", "no vmlinuz-<version> kernel in /boot (Debian naming convention consistency check; not a bootability verdict)" +
+				"; 1 vmlinuz-* entr(y/ies) ignored (empty version or not a regular file inside the root)"},
+		}, nil},
+		{"boot_kernel_escape_with_valid_pair", []Finding{
+			{"symlink_escape", "/boot/vmlinuz-6.9.0-esc", `symlink /boot/vmlinuz-6.9.0-esc -> "../../sentinel" leads outside the root; not followed`},
+		}, []string{v}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, err := pt.BuildFixture(t.TempDir(), cat[tc.name])
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := runCheck(t, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(r.Findings, tc.want) {
+				t.Errorf("findings = %#v\nwant %#v", r.Findings, tc.want)
+			}
+			if !reflect.DeepEqual(append([]string{}, r.Kernels...), append([]string{}, tc.kern...)) {
+				t.Errorf("Kernels = %v; want %v", r.Kernels, tc.kern)
+			}
+		})
+	}
+	// The absolute "/../../<host path>" style is refused at the root even
+	// though the same target reaches the sentinel on the host.
+	sandbox := t.TempDir()
+	root, err := pt.BuildFixture(sandbox, cat["boot_two_kernel_escapes_with_valid_pair"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := runCheck(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Findings) != 2 || !strings.HasPrefix(r.Findings[0].Detail, "symlink /boot/vmlinuz-7.0-abs -> \"/../../") ||
+		!strings.HasSuffix(r.Findings[0].Detail, "/sentinel-abs\" leads outside the root; not followed") ||
+		r.Findings[1].Detail != `symlink /boot/vmlinuz-9.0-rel -> "../../sentinel-rel" leads outside the root; not followed` {
+		t.Errorf("findings = %#v", r.Findings)
+	}
+	for _, f := range r.Findings {
+		if strings.Contains(f.Detail, "must never be read") {
+			t.Errorf("sentinel content leaked: %+v", f)
+		}
+	}
+	for _, name := range []string{"vmlinuz-7.0-abs", "vmlinuz-9.0-rel"} {
+		host, err := os.Stat(filepath.Join(root, "boot", name))
+		if err != nil {
+			t.Fatalf("host resolution of %s: %v", name, err)
+		}
+		want, err := os.Stat(filepath.Join(sandbox, "sentinel-"+name[len(name)-3:]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(host, want) {
+			t.Errorf("%s does not reach its outside sentinel on the host; fixture is not a genuine escape", name)
+		}
 	}
 }
 

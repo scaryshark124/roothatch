@@ -45,6 +45,17 @@ independent functional review (round 1 PASS) and parent acceptance of the
 compiled binary on 60 synthetic fixtures, comparing text output with the
 previous release; see the [RH-M05 receipt](receipts/RH-M05-CHECK-JSON.md).
 
+RH-M06 makes an existing containment refusal visible: a `/boot/vmlinuz-<version>`
+candidate whose link leads outside the root, which the resolver already refused
+to follow, is now reported as `symlink_escape` at that candidate path, even when
+another valid kernel/initrd pair exists. The candidate is still not counted and
+gets no initrd check; with no valid kernel, the existing `kernel_missing` is also
+reported unchanged. Escaping initrds and other kernel failures keep their earlier
+behavior. Proof: independent functional review (round 1 PASS) and parent
+comparison of the previous and new binaries on 63 synthetic fixtures, where only
+the three escaping-kernel fixtures changed; see the
+[RH-M06 receipt](receipts/RH-M06-KERNEL-ESCAPE.md).
+
 Implemented commands are `help`, `version` and `check` (with `--json`). Native entry, doctor,
 bootstrap, storage and VM functionality are not delivered. RH-M2-01 stays
 unchecked: `check` covers its synthetic-root diagnostics, but the row remains open

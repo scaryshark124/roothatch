@@ -76,11 +76,8 @@ func TestBinaryCatalog(t *testing.T) {
 	for _, fx := range catalog {
 		t.Run(fx.Name, func(t *testing.T) {
 			sandbox := t.TempDir()
-			root := filepath.Join(sandbox, "root")
-			if err := os.Mkdir(root, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := pt.Build(root, fx.Entries...); err != nil {
+			root, err := pt.BuildFixture(sandbox, fx)
+			if err != nil {
 				t.Fatal(err)
 			}
 			before, err := pt.Digest(sandbox)
@@ -224,11 +221,8 @@ func TestBinaryCatalogJSON(t *testing.T) {
 	for _, fx := range append(catalog, pt.EscapeCatalog()...) {
 		t.Run(fx.Name, func(t *testing.T) {
 			sandbox := t.TempDir()
-			root := filepath.Join(sandbox, "root")
-			if err := os.Mkdir(root, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := pt.Build(root, fx.Entries...); err != nil {
+			root, err := pt.BuildFixture(sandbox, fx)
+			if err != nil {
 				t.Fatal(err)
 			}
 			before, err := pt.Digest(sandbox)
@@ -266,6 +260,151 @@ func TestBinaryCatalogJSON(t *testing.T) {
 			}
 			if strings.Contains(stdout, root) {
 				t.Errorf("output leaks host root path: %q", stdout)
+			}
+		})
+	}
+}
+
+// sentinelState is the content and stable lstat metadata of an outside file.
+type sentinelState struct {
+	data  string
+	mode  os.FileMode
+	size  int64
+	mtime time.Time
+}
+
+func readSentinel(t *testing.T, p string) sentinelState {
+	t.Helper()
+	fi, err := os.Lstat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sentinelState{string(data), fi.Mode(), fi.Size(), fi.ModTime()}
+}
+
+// TestBinaryKernelEscape runs the compiled binary in text and --json modes on
+// the escaping-kernel fixtures and their in-tree controls. After every run it
+// checks the exact exit, exact ordered (code, path) findings, that JSON
+// findings equal the text finding block in order, empty stderr, an unchanged
+// lstat manifest of the root and unchanged outside-root sentinel files that
+// the escaping links genuinely reach on the host.
+func TestBinaryKernelEscape(t *testing.T) {
+	bin := buildBinary(t)
+	cat := map[string]pt.Fixture{}
+	for _, fx := range pt.Catalog() {
+		cat[fx.Name] = fx
+	}
+	for _, name := range []string{"boot_kernel_escape", "boot_kernel_escape_with_valid_pair",
+		"boot_two_kernel_escapes_with_valid_pair", "boot_kernel_link_in_tree", "boot_kernel_link_in_tree_relative"} {
+		fx, ok := cat[name]
+		if !ok {
+			t.Fatalf("fixture %s not in Catalog()", name)
+		}
+		t.Run(name, func(t *testing.T) {
+			sandbox := t.TempDir()
+			root, err := pt.BuildFixture(sandbox, fx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			escaping := len(fx.Want) > 0
+			if escaping && len(fx.Outside) == 0 {
+				t.Fatal("escaping fixture has no outside sentinel")
+			}
+			sentinels := map[string]sentinelState{}
+			for _, e := range fx.Outside {
+				p := filepath.Join(sandbox, filepath.FromSlash(e.Path))
+				sentinels[p] = readSentinel(t, p)
+			}
+			// Each escaping kernel link must reach a sentinel on the host, so
+			// the test proves the binary refused a real outside file.
+			reached := 0
+			for _, e := range fx.Entries {
+				// In-tree controls may use absolute targets that only resolve
+				// beneath the root, so only escaping fixtures are host-checked.
+				if !escaping || e.Kind != pt.KindLink || !strings.HasPrefix(e.Path, "boot/vmlinuz-") {
+					continue
+				}
+				hi, err := os.Stat(filepath.Join(root, filepath.FromSlash(e.Path)))
+				if err != nil {
+					t.Fatalf("host stat %s: %v", e.Path, err)
+				}
+				for p := range sentinels {
+					if si, err := os.Stat(p); err == nil && os.SameFile(hi, si) {
+						reached++
+					}
+				}
+			}
+			if escaping && reached != len(fx.Outside) {
+				t.Fatalf("escaping links reach %d of %d sentinels on the host", reached, len(fx.Outside))
+			}
+			manifest, err := pt.Digest(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCode := 0
+			if escaping {
+				wantCode = 3
+			}
+			check := func(mode string) {
+				t.Helper()
+				if after, err := pt.Digest(root); err != nil || after != manifest {
+					t.Errorf("%s: root manifest changed (%v):\nbefore:\n%s\nafter:\n%s", mode, err, manifest, after)
+				}
+				for p, want := range sentinels {
+					if got := readSentinel(t, p); got != want {
+						t.Errorf("%s: outside sentinel %s changed: %+v; want %+v", mode, filepath.Base(p), got, want)
+					}
+				}
+			}
+
+			code, text, stderr := runBinary(t, bin, "check", root)
+			check("text")
+			if code != wantCode || stderr != "" {
+				t.Errorf("text: exit %d stderr %q; want %d and empty stderr", code, stderr, wantCode)
+			}
+			lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+			var block []string
+			for _, l := range lines {
+				if strings.HasPrefix(l, "FAIL: ") || strings.HasPrefix(l, "PASS: ") ||
+					strings.HasPrefix(l, "ok: ") || strings.HasPrefix(l, "note: ") {
+					continue
+				}
+				block = append(block, l)
+			}
+
+			code, js, stderr := runBinary(t, bin, "check", "--json", root)
+			check("json")
+			if code != wantCode || stderr != "" {
+				t.Errorf("json: exit %d stderr %q; want %d and empty stderr", code, stderr, wantCode)
+			}
+			r := checkJSONDocument(t, js)
+			gotP := []pt.FindingPair{}
+			rendered := []string{}
+			for _, f := range r.Findings {
+				gotP = append(gotP, pt.FindingPair{Code: f.Code, Path: f.Path})
+				rendered = append(rendered, f.Code+": "+f.Path+": "+f.Detail)
+			}
+			wantP := append([]pt.FindingPair{}, fx.Findings...)
+			if !reflect.DeepEqual(gotP, wantP) {
+				t.Errorf("json (code, path) = %v; want %v\n%s", gotP, wantP, js)
+			}
+			if !reflect.DeepEqual(append([]string{}, block...), rendered) {
+				t.Errorf("text finding block = %q; want JSON findings in order %q", block, rendered)
+			}
+			if escaping && (!strings.HasPrefix(lines[len(lines)-1], "FAIL: ") || r.Result != "findings") {
+				t.Errorf("verdict text %q json %q; want FAIL and findings", lines[len(lines)-1], r.Result)
+			}
+			if !escaping && (!strings.HasPrefix(lines[len(lines)-1], "PASS: ") || r.Result != "pass") {
+				t.Errorf("verdict text %q json %q; want PASS and pass", lines[len(lines)-1], r.Result)
+			}
+			for _, out := range []string{text, js} {
+				if strings.Contains(out, "must never be read") {
+					t.Errorf("sentinel content leaked: %q", out)
+				}
 			}
 		})
 	}

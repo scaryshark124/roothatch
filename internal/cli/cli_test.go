@@ -90,19 +90,31 @@ func newRoot(t *testing.T, entries ...pt.Entry) string {
 	return root
 }
 
+// fixtureRoot builds fx (including any outside-root sentinels) in a fresh
+// sandbox and returns the sandbox and its root.
+func fixtureRoot(t *testing.T, fx pt.Fixture) (string, string) {
+	t.Helper()
+	sandbox := t.TempDir()
+	root, err := pt.BuildFixture(sandbox, fx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sandbox, root
+}
+
 // TestCheckFixtures exercises the real command path for every synthetic
-// fixture and proves each tree is unchanged afterwards.
+// fixture and proves each tree (and outside sentinel) is unchanged afterwards.
 func TestCheckFixtures(t *testing.T) {
 	for _, fx := range pt.Catalog() {
 		t.Run(fx.Name, func(t *testing.T) {
-			root := newRoot(t, fx.Entries...)
-			before, err := pt.Digest(root)
+			sandbox, root := fixtureRoot(t, fx)
+			before, err := pt.Digest(sandbox)
 			if err != nil {
 				t.Fatal(err)
 			}
 			var out, errOut bytes.Buffer
 			code := Run([]string{"check", root}, &out, &errOut, "v-test")
-			after, err := pt.Digest(root)
+			after, err := pt.Digest(sandbox)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,6 +148,11 @@ func TestCheckFixtures(t *testing.T) {
 			for i, c := range fx.Want {
 				if !strings.HasPrefix(lines[i], c+": ") {
 					t.Errorf("line %d = %q; want prefix %q", i, lines[i], c+": ")
+				}
+			}
+			for i, p := range fx.Findings {
+				if i < len(lines) && !strings.HasPrefix(lines[i], p.Code+": "+p.Path+": ") {
+					t.Errorf("line %d = %q; want prefix %q", i, lines[i], p.Code+": "+p.Path+": ")
 				}
 			}
 			if !strings.HasPrefix(lines[len(lines)-1], "FAIL: ") {

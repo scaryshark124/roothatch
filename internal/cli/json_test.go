@@ -70,18 +70,18 @@ func decodeStrict(t *testing.T, out []byte) strictReport {
 func TestCheckJSONMatchesReport(t *testing.T) {
 	for _, fx := range append(pt.Catalog(), pt.EscapeCatalog()...) {
 		t.Run(fx.Name, func(t *testing.T) {
-			root := newRoot(t, fx.Entries...)
+			sandbox, root := fixtureRoot(t, fx)
 			want, err := preflight.Check(root)
 			if err != nil {
 				t.Fatal(err)
 			}
-			before, err := pt.Digest(root)
+			before, err := pt.Digest(sandbox)
 			if err != nil {
 				t.Fatal(err)
 			}
 			var out, errOut bytes.Buffer
 			code := Run([]string{"check", "--json", root}, &out, &errOut, "v")
-			if after, err := pt.Digest(root); err != nil || after != before {
+			if after, err := pt.Digest(sandbox); err != nil || after != before {
 				t.Errorf("fixture changed (%v)", err)
 			}
 			if errOut.Len() != 0 {
@@ -104,6 +104,15 @@ func TestCheckJSONMatchesReport(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got.Findings, wantF) {
 				t.Errorf("findings = %#v; want %#v", got.Findings, wantF)
+			}
+			if fx.Findings != nil {
+				gotP := []pt.FindingPair{}
+				for _, f := range got.Findings {
+					gotP = append(gotP, pt.FindingPair{Code: f.Code, Path: f.Path})
+				}
+				if !reflect.DeepEqual(gotP, fx.Findings) {
+					t.Errorf("JSON (code, path) = %v; want %v", gotP, fx.Findings)
+				}
 			}
 			for _, f := range got.Findings {
 				for _, s := range []string{f.Code, f.Path, f.Detail} {

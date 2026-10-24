@@ -410,8 +410,12 @@ func checkBoot(rootfd int, r *Report) {
 			continue
 		}
 		if _, f := regularIn(rootfd, BootDir+"/"+n); f != nil {
-			if f.kind == failIO {
+			switch f.kind {
+			case failIO:
 				r.add("read_error", BootDir+"/"+n, f.detail)
+			case failEscape:
+				// Reported at the in-root candidate; never followed or counted.
+				r.add("symlink_escape", BootDir+"/"+n, f.detail)
 			}
 			skipped++
 			continue
