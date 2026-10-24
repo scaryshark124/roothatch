@@ -662,8 +662,8 @@ func TestInterpUnreadable(t *testing.T) {
 }
 
 // TestInterpHeaderBoundary pins the helper's narrow boundary: only ident,
-// class-specific header length and e_machine matter. Other header fields,
-// even hostile table offsets/counts, and trailing bytes are ignored.
+// class-specific header length, e_machine and e_type matter. Other header
+// fields, even hostile table offsets/counts, and trailing bytes are ignored.
 func TestInterpHeaderBoundary(t *testing.T) {
 	le := binary.LittleEndian
 	ok := func(fn func(b []byte) []byte) []byte {
@@ -671,7 +671,6 @@ func TestInterpHeaderBoundary(t *testing.T) {
 	}
 	for name, b := range map[string][]byte{
 		"bare header":       ok(func(b []byte) []byte { return b }),
-		"e_type ET_REL":     ok(func(b []byte) []byte { le.PutUint16(b[16:], 1); return b }),
 		"e_version 0":       ok(func(b []byte) []byte { le.PutUint32(b[20:], 0); return b }),
 		"OS ABI 97":         ok(func(b []byte) []byte { b[7] = 97; return b }),
 		"huge phoff/phnum":  ok(func(b []byte) []byte { le.PutUint64(b[32:], ^uint64(0)); le.PutUint16(b[56:], 0xffff); return b }),
@@ -696,6 +695,7 @@ func TestInterpHeaderBoundary(t *testing.T) {
 		"ELF32 full x86-64":      {pt.Header(pt.ELFClass32, pt.ELFDataLSB, pt.EMX8664), "interp_arch_unsupported"},
 		"ELF32 BE MIPS":          {pt.Header(pt.ELFClass32, pt.ELFDataMSB, 8), "interp_arch_unsupported"},
 		"ELF64 LE unknown 65535": {pt.Header(pt.ELFClass64, pt.ELFDataLSB, 0xffff), "interp_arch_unsupported"},
+		"e_type ET_REL":          {ok(func(b []byte) []byte { le.PutUint16(b[16:], 1); return b }), "interp_elf_invalid"},
 	} {
 		p := interpHeader(tc.b)
 		if p == nil || p.code != tc.code || !strings.HasSuffix(p.detail, interpNoteWant) {
@@ -705,6 +705,10 @@ func TestInterpHeaderBoundary(t *testing.T) {
 	if p := interpHeader(pt.Header(pt.ELFClass32, pt.ELFDataMSB, 8)); p == nil ||
 		!strings.HasPrefix(p.detail, "interpreter is ELF32 big-endian machine 8 (MIPS);") {
 		t.Errorf("big-endian e_machine not decoded in declared order: %+v", p)
+	}
+	if p := interpHeader(ok(func(b []byte) []byte { le.PutUint16(b[16:], 1); return b })); p == nil ||
+		!strings.HasPrefix(p.detail, "ELF type 1 (ET_REL) is not an executable or shared object") {
+		t.Errorf("ET_REL detail: %+v", p)
 	}
 	if p := interpHeader(pt.Header(pt.ELFClass64, pt.ELFDataLSB, 0xffff)); p == nil ||
 		!strings.HasPrefix(p.detail, "interpreter is ELF64 little-endian machine 65535 (unknown);") {

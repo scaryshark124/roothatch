@@ -116,10 +116,11 @@ func parseELF(b []byte, size int64) (interp string, hasInterp bool, p *elfProble
 const interpNote = " (header-level check of the interpreter only; not a verdict that the loader works)"
 
 // interpHeader checks only the ELF file header of the interpreter prefix b:
-// identification bytes, the full class-specific header length, and e_machine
-// in the declared byte order. It never reads, seeks or allocates from header
-// offsets or sizes and never inspects program headers. ELF64 little-endian
-// x86-64 passes; anything else is a finding.
+// identification bytes, the full class-specific header length, e_machine in
+// the declared byte order and, for ELF64 little-endian x86-64 only, e_type. It
+// never reads, seeks or allocates from header offsets or sizes and never
+// inspects program headers. ELF64 little-endian x86-64 ET_EXEC or ET_DYN
+// passes; anything else is a finding.
 func interpHeader(b []byte) *elfProblem {
 	bad := func(format string, args ...any) *elfProblem {
 		return &elfProblem{"interp_elf_invalid", fmt.Sprintf(format, args...) + interpNote}
@@ -150,7 +151,15 @@ func interpHeader(b []byte) *elfProblem {
 	}
 	m := bo.Uint16(b[18:])
 	if class == 2 && data == 1 && m == emX8664 {
-		return nil
+		t := bo.Uint16(b[16:])
+		if t == 2 || t == 3 { // ET_EXEC, ET_DYN
+			return nil
+		}
+		typeName := map[uint16]string{0: "ET_NONE", 1: "ET_REL", 4: "ET_CORE"}[t]
+		if typeName == "" {
+			typeName = "unknown"
+		}
+		return bad("ELF type %d (%s) is not an executable or shared object", t, typeName)
 	}
 	name := machineNames[m]
 	switch {

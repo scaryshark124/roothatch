@@ -30,6 +30,11 @@
   x86-64 is `interp_arch_unsupported`, both at the PT_INTERP path. An
   unreadable interpreter is now `read_error`. This is a header-level check
   only, not a verdict that the loader works.
+- `check` now also requires the interpreter's ELF64 little-endian x86-64
+  header to declare type ET_EXEC or ET_DYN; any other `e_type` (for example
+  ET_REL, ET_NONE or ET_CORE) is `interp_elf_invalid` at the PT_INTERP path,
+  naming the type. Malformed headers and unsupported architectures keep their
+  earlier findings. Program headers are still not inspected.
 - Added `roothatch check --json <dir>`: the same report as one JSON document
   (`schema_version` 1, `result` `pass`/`findings`, `findings` of
   `code`/`path`/`detail`, `[]` when empty), with unchanged exit codes. Usage

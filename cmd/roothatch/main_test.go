@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -574,6 +575,61 @@ func TestBinaryInterpHeader(t *testing.T) {
 				if !strings.Contains(f.Detail, "header-level check") || !strings.Contains(f.Detail, "not a verdict that the loader works") {
 					t.Errorf("detail lacks header-level disclaimer: %q", f.Detail)
 				}
+			}
+			if after, err := pt.Digest(sandbox); err != nil || after != before {
+				t.Errorf("manifest changed (%v):\nbefore:\n%s\nafter:\n%s", err, before, after)
+			}
+		})
+	}
+}
+
+// TestBinaryInterpType runs the compiled binary in text and --json modes on
+// every interpreter e_type fixture, checking exact ordered findings, exact
+// details, exit, empty stderr and an unchanged whole-sandbox manifest.
+func TestBinaryInterpType(t *testing.T) {
+	bin := buildBinary(t)
+	const note = " (header-level check of the interpreter only; not a verdict that the loader works)"
+	typeDetail := func(n int, name string) string {
+		return "ELF type " + strconv.Itoa(n) + " (" + name + ") is not an executable or shared object" + note
+	}
+	details := map[string][]string{
+		"interp_type_none":              {typeDetail(0, "ET_NONE")},
+		"interp_type_rel":               {typeDetail(1, "ET_REL")},
+		"interp_type_core":              {typeDetail(4, "ET_CORE")},
+		"interp_type_unknown_65535":     {typeDetail(65535, "unknown")},
+		"interp_arch_elf32_be_bad_type": {"interpreter is ELF32 big-endian machine 8 (MIPS); want ELF64 little-endian x86-64 (62)" + note},
+		"interp_type_exec":              nil,
+	}
+	inCatalog := map[string]bool{}
+	for _, fx := range pt.Catalog() {
+		inCatalog[fx.Name] = true
+	}
+	fxs := pt.InterpTypeCatalog()
+	if len(fxs) != len(details) {
+		t.Fatalf("got %d fixtures; want %d", len(fxs), len(details))
+	}
+	for _, fx := range fxs {
+		want, ok := details[fx.Name]
+		if !ok || !inCatalog[fx.Name] {
+			t.Fatalf("fixture %s: pinned %v, in Catalog() %v", fx.Name, ok, inCatalog[fx.Name])
+		}
+		t.Run(fx.Name, func(t *testing.T) {
+			sandbox := t.TempDir()
+			root, err := pt.BuildFixture(sandbox, fx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := pt.Digest(sandbox)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := runBothModes(t, bin, root, fx.Findings)
+			gotD := []string{}
+			for _, f := range got {
+				gotD = append(gotD, f.Detail)
+			}
+			if !reflect.DeepEqual(gotD, append([]string{}, want...)) {
+				t.Errorf("details = %q; want %q", gotD, want)
 			}
 			if after, err := pt.Digest(sandbox); err != nil || after != before {
 				t.Errorf("manifest changed (%v):\nbefore:\n%s\nafter:\n%s", err, before, after)

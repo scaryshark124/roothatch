@@ -80,6 +80,15 @@ synthetic fixtures, where only the ten new failing interpreter fixtures changed,
 plus an unprivileged unreadable-interpreter run; see the
 [RH-M08 receipt](receipts/RH-M08-INTERP-HEADER.md).
 
+RH-M09 adds the interpreter's ELF file type to that header check: after the
+header is confirmed to be complete ELF64 little-endian x86-64, `e_type` must be
+`ET_EXEC` or `ET_DYN`; any other type reports `interp_elf_invalid` at the
+interpreter path naming the type. No new reads are made. Malformed and
+non-x86-64 headers keep their earlier findings. Proof: independent functional
+review (round 1 PASS) and parent comparison of the previous and new binaries on
+the same 86 synthetic fixtures, where only the four type-rejection
+fixtures changed; see the [RH-M09 receipt](receipts/RH-M09-INTERP-TYPE.md).
+
 Implemented commands are `help`, `version` and `check` (with `--json`). Native entry, doctor,
 bootstrap, storage and VM functionality are not delivered. RH-M2-01 stays
 unchecked: `check` covers its synthetic-root diagnostics, but the row remains open

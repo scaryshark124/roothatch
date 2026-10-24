@@ -2,7 +2,7 @@
 
 Only `cmd/roothatch`, `internal/cli` and the read-only `internal/preflight` checker
 are executable code so far. The checker inspects `/bin/sh`, the ELF header of its
-interpreter (class, byte order and machine only) and, by Debian naming
+interpreter (class, byte order, machine and ET_EXEC/ET_DYN type only) and, by Debian naming
 convention only, the in-tree `/boot` kernels/initrds and optional
 `/vmlinuz`/`/initrd.img` links, all through descriptor-confined
 resolution; it does not establish bootability. `internal/cli` renders that one
