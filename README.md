@@ -21,7 +21,12 @@ passes but whose resolved regular file has no execute permission bit, and applie
 `/vmlinuz` and `/initrd.img` links); a pass does not show the root is bootable or
 healthy. `check --json <dir>` writes the same report as one JSON document
 (`schema_version` 1, `result` `pass` or `findings`, and `findings` with `code`,
-`path` and `detail`); `pass` is not a bootability verdict. There is no working chroot, mount,
+`path` and `detail`); `pass` is not a bootability verdict. `check --shell-only
+<dir>` (optionally with `--json` before `<dir>`, in either order) runs only the
+`/bin/sh` and interpreter checks for trees without boot files: the independent
+`/boot` kernel/initrd and `/vmlinuz`/`/initrd.img` checks are skipped, although
+`/bin/sh` or its interpreter may still resolve beneath `/boot`; its `result`
+covers only those checks. There is no working chroot, mount,
 bootstrap, repair, image, or VM backend yet.
 Do not run this project as root or use it to repair an actual installation.
 

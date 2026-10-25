@@ -15,6 +15,8 @@ const usage = `Roothatch — Build it. Fix it. Boot it.
 Usage: roothatch [help|version]
        roothatch check <dir>
        roothatch check --json <dir>
+       roothatch check --shell-only <dir>
+       roothatch check --json --shell-only <dir>
 
 check inspects the Linux root tree at <dir> read-only and without privileges.
 It checks only that /bin/sh resolves inside <dir>, is an ELF64 little-endian
@@ -42,7 +44,18 @@ check --json <dir> runs the same checks and writes one JSON document to stdout:
 {"schema_version": 1, "result": "pass"|"findings", "findings": [{"code",
 "path", "detail"}]}, with the same exit status. "pass" means only that the
 current limited checks passed; it is not a bootability verdict. --json must
-come directly after check; usage errors write nothing to stdout.
+come before <dir> (directly after check unless --shell-only is also given);
+usage errors write nothing to stdout.
+
+check --shell-only <dir> runs only the /bin/sh and ELF interpreter checks above
+and skips the independent /boot kernel/initrd checks and the /vmlinuz and
+/initrd.img shortcut-link checks, for trees that have no boot files. /bin/sh or
+its PT_INTERP may still resolve beneath /boot and are then checked there like
+any other path. It reports the same shell findings and exit status as check;
+its PASS line says /boot, /vmlinuz and /initrd.img were not checked. With
+--json (before or after --shell-only; both flags before <dir>, each at most
+once) it writes the same schema_version 1 document; its "result" covers
+only the checks requested.
 
 Help, version and check are the only implemented commands in this pre-alpha.
 Native entry, repair, image management and VM boot are not implemented.
@@ -98,29 +111,87 @@ type jsonReport struct {
 	Findings      []jsonFinding `json:"findings"`
 }
 
+const shellOnlyFlag = "--shell-only"
+
 func runCheck(args []string, stdout, stderr io.Writer) int {
-	// The only accepted forms are "check <dir>" and "check --json <dir>".
-	// A bare "check --json" is rejected rather than read as a directory.
-	asJSON := len(args) == 2 && args[0] == "--json"
-	if asJSON {
-		args = args[1:]
-	} else if len(args) == 1 && args[0] == "--json" {
-		fmt.Fprintln(stderr, "roothatch: check --json requires exactly one directory: roothatch check --json <dir>")
+	dir, asJSON, shellOnly, ok := parseCheckArgs(args, stderr)
+	if !ok {
 		return 2
 	}
-	if len(args) != 1 {
-		fmt.Fprintln(stderr, "roothatch: check requires exactly one directory: roothatch check <dir>")
-		return 2
+	check := preflight.Check
+	if shellOnly {
+		check = preflight.CheckShell
 	}
-	report, err := preflight.Check(args[0])
+	report, err := check(dir)
 	if err != nil {
-		fmt.Fprintf(stderr, "roothatch: check: %q is not a usable directory: %v\n", args[0], err)
+		fmt.Fprintf(stderr, "roothatch: check: %q is not a usable directory: %v\n", dir, err)
 		return 2
 	}
-	if asJSON {
+	switch {
+	case asJSON:
 		return writeJSON(report, stdout, stderr)
+	case shellOnly:
+		return writeShellText(report, stdout, stderr)
 	}
 	return writeText(report, stdout, stderr)
+}
+
+// parseCheckArgs accepts only "check <dir>", "check --json <dir>",
+// "check --shell-only <dir>" and "check --json --shell-only <dir>" in either
+// flag order. Without --shell-only it keeps the previous parser and messages
+// exactly. It writes an explanation to stderr when it rejects the arguments.
+func parseCheckArgs(args []string, stderr io.Writer) (dir string, asJSON, shellOnly, ok bool) {
+	for _, a := range args {
+		if a == shellOnlyFlag {
+			shellOnly = true
+		}
+	}
+	if !shellOnly {
+		// The previous accepted forms: "check <dir>" and "check --json <dir>".
+		// A bare "check --json" is rejected rather than read as a directory.
+		asJSON = len(args) == 2 && args[0] == "--json"
+		if asJSON {
+			args = args[1:]
+		} else if len(args) == 1 && args[0] == "--json" {
+			fmt.Fprintln(stderr, "roothatch: check --json requires exactly one directory: roothatch check --json <dir>")
+			return "", false, false, false
+		}
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "roothatch: check requires exactly one directory: roothatch check <dir>")
+			return "", false, false, false
+		}
+		return args[0], asJSON, false, true
+	}
+	const form = "roothatch check [--json] --shell-only <dir>"
+	shellOnly = false
+	i := 0
+	for ; i < len(args); i++ {
+		a := args[i]
+		if a != "--json" && a != shellOnlyFlag {
+			break
+		}
+		if (a == "--json" && asJSON) || (a == shellOnlyFlag && shellOnly) {
+			fmt.Fprintf(stderr, "roothatch: check: %s given more than once; usage: %s\n", a, form)
+			return "", false, false, false
+		}
+		if a == "--json" {
+			asJSON = true
+		} else {
+			shellOnly = true
+		}
+	}
+	rest := args[i:]
+	if len(rest) != 1 {
+		fmt.Fprintf(stderr, "roothatch: check requires exactly one directory after its flags; flags must come before it: %s\n", form)
+		return "", false, false, false
+	}
+	// --shell-only is present, and any occurrence not consumed above would
+	// leave more than one operand, so shellOnly is set here.
+	if strings.HasPrefix(rest[0], "-") {
+		fmt.Fprintf(stderr, "roothatch: check: unknown flag %q; usage: %s\n", rest[0], form)
+		return "", false, false, false
+	}
+	return rest[0], asJSON, true, true
 }
 
 // writeJSON serializes report as one JSON document, preserving finding order
@@ -164,5 +235,31 @@ func writeText(report preflight.Report, stdout, stderr io.Writer) int {
 		}
 	}
 	b.WriteString("PASS: limited checks passed (shell, ELF architecture, interpreter, Debian /boot kernel/initrd naming, optional /vmlinuz and /initrd.img links, symlink containment); this does not show the root is bootable or healthy\n")
+	return write(stdout, stderr, b.String(), 0)
+}
+
+// shellOnlyPass is the final line of a passing "check --shell-only".
+const shellOnlyPass = "PASS: limited shell checks passed (shell, ELF architecture, interpreter file type and ELF header, " +
+	"shell and interpreter execute bits, symlink containment); /boot, /vmlinuz and /initrd.img were not checked as boot files; " +
+	"this does not show the root is bootable or healthy\n"
+
+// writeShellText renders a CheckShell report: the same finding and FAIL
+// lines as writeText, or on a pass only the shell/interpreter line and the
+// limited shell PASS line. Exit 0 pass, 3 findings, 1 output failure.
+func writeShellText(report preflight.Report, stdout, stderr io.Writer) int {
+	var b strings.Builder
+	for _, f := range report.Findings {
+		fmt.Fprintf(&b, "%s: %s: %s\n", f.Code, f.Path, f.Detail)
+	}
+	if n := len(report.Findings); n > 0 {
+		fmt.Fprintf(&b, "FAIL: %d finding(s); the limited checks did not pass\n", n)
+		return write(stdout, stderr, b.String(), 3)
+	}
+	if report.Static {
+		b.WriteString("note: /bin/sh is a static ELF64 x86-64 file without PT_INTERP; interpreter check not applicable\n")
+	} else {
+		fmt.Fprintf(&b, "ok: /bin/sh is ELF64 little-endian x86-64; interpreter %s resolves inside the root\n", report.Interp)
+	}
+	b.WriteString(shellOnlyPass)
 	return write(stdout, stderr, b.String(), 0)
 }

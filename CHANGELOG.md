@@ -57,6 +57,15 @@
   (`schema_version` 1, `result` `pass`/`findings`, `findings` of
   `code`/`path`/`detail`, `[]` when empty), with unchanged exit codes. Usage
   errors write nothing to stdout. `pass` is not a bootability verdict.
+- Added `roothatch check --shell-only <dir>` (also with `--json`, before or
+  after `--shell-only`, both before `<dir>`, each at most once) for trees
+  without boot files. It runs only the existing `/bin/sh` and ELF interpreter
+  checks with the same findings and exit codes; the independent `/boot`
+  kernel/initrd and `/vmlinuz`/`/initrd.img` checks are not run, although
+  `/bin/sh` or its PT_INTERP may still resolve beneath `/boot`. Its PASS line
+  says those boot files were not checked, and its schema_version 1 JSON
+  `result` covers only the checks requested. Default `check` output is
+  unchanged.
 
 - Selected Apache-2.0, included LICENSE/NOTICE and bound the actual GitHub module.
 - Approved project guidance and Roothatch-specific role bindings; verified native

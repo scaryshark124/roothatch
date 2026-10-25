@@ -9,6 +9,11 @@ convention only, the in-tree `/boot` kernels/initrds and optional
 `/vmlinuz`/`/initrd.img` links, all through descriptor-confined
 resolution; it does not establish bootability. `internal/cli` renders that one
 report as text or, for `check --json <dir>`, as a schema_version 1 JSON document.
+`check --shell-only <dir>` calls `preflight.CheckShell`, which shares root
+admission with `Check` but selects only the shell/interpreter phase, so the
+independent `/boot` and shortcut-link phases never run (the shell or its
+interpreter may still resolve beneath `/boot`); its text and JSON describe only
+that phase.
 The following are proposed component boundaries, not delivered implementations.
 
 ## One target, two execution modes

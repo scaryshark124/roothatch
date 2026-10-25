@@ -109,7 +109,18 @@ and parent comparison of the previous and new binaries on the same
 105 synthetic fixtures, where only the three non-executable-loader
 fixtures changed; see the [RH-M11 receipt](receipts/RH-M11-INTERP-EXEC.md).
 
-Implemented commands are `help`, `version` and `check` (with `--json`). Native entry, doctor,
+RH-M12 adds `check --shell-only <dir>` (also with `--json`) for trees that do
+not have boot files yet. It runs only the `/bin/sh` and ELF interpreter phase;
+the independent `/boot`, `/vmlinuz` and `/initrd.img` phases are not invoked,
+though a shell or interpreter that itself resolves under `/boot` is still
+checked. Its pass line says boot files were not checked. Default `check` output
+is unchanged and JSON stays schema version 1, with `result` covering only the
+checks requested. Proof: independent functional review (round 1 PASS); default
+output byte-identical to the previous release on 117 synthetic roots;
+shell-only findings equal to the previous release's own shell check called
+directly on the same roots; see the [RH-M12 receipt](receipts/RH-M12-SHELL-ONLY.md).
+
+Implemented commands are `help`, `version` and `check` (with `--json` and `--shell-only`). Native entry, doctor,
 bootstrap, storage and VM functionality are not delivered. RH-M2-01 stays
 unchecked: `check` covers its synthetic-root diagnostics, but the row remains open
 while the M1 target/lifecycle design is held.

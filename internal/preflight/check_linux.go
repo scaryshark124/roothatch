@@ -251,15 +251,38 @@ func locate(rootfd int, p string, ro role, r *Report) (int, *syscall.Stat_t, boo
 // The shell/interpreter checks and the /boot checks run independently and
 // all findings are reported in a deterministic order.
 func Check(dir string) (Report, error) {
+	return run(dir, allPhases())
+}
+
+// CheckShell inspects the root tree at dir with only the /bin/sh and ELF
+// interpreter phase of Check, admitting dir exactly as Check does. It never
+// calls the independent /boot or shortcut-link phases, although /bin/sh or
+// its PT_INTERP may themselves resolve beneath /boot.
+func CheckShell(dir string) (Report, error) {
+	return run(dir, shellPhases())
+}
+
+// phase is one independent check run against an admitted root descriptor.
+type phase func(rootfd int, r *Report)
+
+// allPhases is the full Check selection, in report order.
+func allPhases() []phase { return []phase{checkShell, checkBoot, checkShortcuts} }
+
+// shellPhases is the CheckShell selection: the shell/interpreter phase only.
+func shellPhases() []phase { return []phase{checkShell} }
+
+// run admits dir as the root, runs exactly the selected phases in order on
+// that one descriptor, and closes it.
+func run(dir string, phases []phase) (Report, error) {
 	rootfd, err := syscall.Open(dir, oPath|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return Report{}, &RootError{Dir: dir, Err: err}
 	}
 	defer syscall.Close(rootfd)
 	var r Report
-	checkShell(rootfd, &r)
-	checkBoot(rootfd, &r)
-	checkShortcuts(rootfd, &r)
+	for _, p := range phases {
+		p(rootfd, &r)
+	}
 	return r, nil
 }
 
