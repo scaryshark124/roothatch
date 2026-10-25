@@ -15,7 +15,8 @@ the interpreter, a header-level check of its ELF class, byte order and machine
 and that its type is ET_EXEC or ET_DYN, not a verdict that the loader works),
 reports `shell_not_executable` when the resolved `/bin/sh` file has no owner,
 group or other execute permission bit (mode bits only, not whether any user can
-run it), and applies Debian naming-convention consistency checks to the in-tree `/boot`
+run it), likewise reports `interp_not_executable` for an interpreter whose header
+passes but whose resolved regular file has no execute permission bit, and applies Debian naming-convention consistency checks to the in-tree `/boot`
 (`vmlinuz-<version>` with a matching `initrd.img-<version>`, plus the optional
 `/vmlinuz` and `/initrd.img` links); a pass does not show the root is bootable or
 healthy. `check --json <dir>` writes the same report as one JSON document

@@ -99,6 +99,16 @@ of the previous and new binaries on the same 92 synthetic fixtures,
 where only the three non-executable-shell fixtures changed; see the
 [RH-M10 receipt](receipts/RH-M10-SHELL-EXEC.md).
 
+RH-M11 applies the same mode-bit check to the ELF interpreter: after it passes
+the header, architecture and type checks, an interpreter whose resolved regular
+file has no owner, group or other execute bit reports `interp_not_executable` at
+the PT_INTERP path. Earlier interpreter findings and all shell findings are
+unchanged. This is a mode-bit diagnostic only, not an effective-access check or
+proof that the loader runs. Proof: independent functional review (round 1 PASS)
+and parent comparison of the previous and new binaries on the same
+105 synthetic fixtures, where only the three non-executable-loader
+fixtures changed; see the [RH-M11 receipt](receipts/RH-M11-INTERP-EXEC.md).
+
 Implemented commands are `help`, `version` and `check` (with `--json`). Native entry, doctor,
 bootstrap, storage and VM functionality are not delivered. RH-M2-01 stays
 unchecked: `check` covers its synthetic-root diagnostics, but the row remains open

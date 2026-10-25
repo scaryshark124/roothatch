@@ -24,7 +24,9 @@ executable or shared-object type (ET_EXEC or ET_DYN). That is a header-level
 check only; the loader is never run or otherwise validated. A valid /bin/sh
 whose resolved regular file has no owner, group or other execute permission bit
 is reported as shell_not_executable (mode bits only; not a check of whether any
-user can run it); its interpreter is still checked.
+user can run it); its interpreter is still checked. Likewise, an interpreter
+whose header passes but whose resolved regular file has no execute permission
+bit is reported as interp_not_executable at the PT_INTERP path (mode bits only).
 Independently it applies Debian naming-convention consistency checks to the
 in-tree <dir>/boot: at least one /boot/vmlinuz-<version> regular file, and a
 matching /boot/initrd.img-<version> regular file for every such kernel; the

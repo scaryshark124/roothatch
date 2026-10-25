@@ -43,6 +43,16 @@
   still run and report after it. Earlier shell failures keep their single
   finding, and an unreadable shell is still `read_error`. The interpreter's
   permission bits are not checked.
+- `check` now reports `interp_not_executable` at the PT_INTERP path when the
+  interpreter resolves inside the root to a regular file whose ELF header
+  passes but whose own mode (the resolved target's, never a link's or the
+  shell's) has no owner, group or other execute bit. This replaces the note
+  above that the interpreter's permission bits are not checked. It reads mode
+  bits already obtained for that file only; it is not a check of whether any
+  user can run it. A non-executable shell and interpreter report
+  `shell_not_executable` then `interp_not_executable`. Unreadable interpreters
+  keep `read_error`, header failures keep their single finding, and static
+  shells still do no interpreter work.
 - Added `roothatch check --json <dir>`: the same report as one JSON document
   (`schema_version` 1, `result` `pass`/`findings`, `findings` of
   `code`/`path`/`detail`, `[]` when empty), with unchanged exit codes. Usage

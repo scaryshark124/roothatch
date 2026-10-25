@@ -376,7 +376,8 @@ func Catalog() []Fixture {
 		{Name: "dir_link_trailing_slash", Entries: []Entry{
 			Link("bin", "usr/bin/"), Link("lib64", "usr/lib64/"), Dir("usr/bin"), Dir("usr/lib64"), shell(), loaderFile(),
 		}},
-	}), append(append(append(bootCatalog(), InterpCatalog()...), InterpTypeCatalog()...), ShellExecCatalog()...)...)
+	}), append(append(append(append(bootCatalog(), InterpCatalog()...), InterpTypeCatalog()...), ShellExecCatalog()...),
+		InterpExecCatalog()...)...)
 }
 
 // LargeLoaderSize is the size of the interp_large_valid_header loader, well

@@ -1,6 +1,6 @@
 # Roothatch master checklist
 
-Current position: **M0 COMPLETE; read-only `check <dir>` preflight delivered (RH-M01) with in-tree `/boot` kernel/initrd checks (RH-M04) and `--json` output (RH-M05), reporting escaping kernel candidates and initrd links (RH-M06, RH-M07), checking the ELF interpreter's header and file type (RH-M08, RH-M09), reporting a non-executable `/bin/sh` (RH-M10); M1 design is held and M1 onward is not complete.**
+Current position: **M0 COMPLETE; read-only `check <dir>` preflight delivered (RH-M01) with in-tree `/boot` kernel/initrd checks (RH-M04) and `--json` output (RH-M05), reporting escaping kernel candidates and initrd links (RH-M06, RH-M07), checking the ELF interpreter's header and file type (RH-M08, RH-M09), reporting a non-executable `/bin/sh` and ELF interpreter (RH-M10, RH-M11); M1 design is held and M1 onward is not complete.**
 Completed foundation rows are backed by the historical
 [RH-000 receipt](docs/development/receipts/RH-000-BOOTSTRAP.md), subsequent
 [RH-002/003 setup receipt](docs/development/receipts/RH-002-003-SETUP.md), and

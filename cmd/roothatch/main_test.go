@@ -816,3 +816,140 @@ func TestBinaryShellUnreadable(t *testing.T) {
 		t.Errorf("manifest changed (%v):\nbefore:\n%s\nafter:\n%s", err, before, after)
 	}
 }
+
+// TestBinaryInterpExec runs the compiled binary in text and --json modes on
+// every interpreter permission-bit fixture: exact ordered (code, path)
+// findings, exact details, exit, empty stderr, JSON equal to the text finding
+// block, and an unchanged whole-sandbox manifest that records every explicit
+// shell and loader mode (and the PT_INTERP symlink itself, never followed).
+func TestBinaryInterpExec(t *testing.T) {
+	bin := buildBinary(t)
+	const note = " (header-level check of the interpreter only; not a verdict that the loader works)"
+	noExec := shellNoExecDetail("0644")
+	details := map[string][]string{
+		"interp_noexec_0644":          {noExec},
+		"interp_noexec_shell_noexec":  {noExec, noExec},
+		"interp_noexec_link_target":   {noExec},
+		"interp_exec_owner_only":      nil,
+		"interp_exec_group_only":      nil,
+		"interp_exec_other_only":      nil,
+		"interp_exec_link_target":     nil,
+		"interp_exec_et_exec_0755":    nil,
+		"interp_noexec_unused_static": nil,
+		"interp_noexec_elf_text":      {"not an ELF file" + note},
+		"interp_noexec_arch_aarch64":  {"interpreter is ELF64 little-endian machine 183 (AArch64); want ELF64 little-endian x86-64 (62)" + note},
+		"interp_noexec_type_rel":      {"ELF type 1 (ET_REL) is not an executable or shared object" + note},
+		"interp_exec_shell_noexec":    {noExec},
+	}
+	inCatalog := map[string]bool{}
+	for _, fx := range pt.Catalog() {
+		inCatalog[fx.Name] = true
+	}
+	fxs := pt.InterpExecCatalog()
+	if len(fxs) != len(details) {
+		t.Fatalf("got %d fixtures; want %d", len(fxs), len(details))
+	}
+	for _, fx := range fxs {
+		want, ok := details[fx.Name]
+		if !ok || !inCatalog[fx.Name] {
+			t.Fatalf("fixture %s: pinned %v, in Catalog() %v", fx.Name, ok, inCatalog[fx.Name])
+		}
+		var modeLines []string
+		for _, e := range fx.Entries {
+			switch {
+			case e.Mode != nil:
+				modeLines = append(modeLines, "\nroot/"+e.Path+" "+e.Mode.String()+" sha256=")
+			case e.Kind == pt.KindLink && e.Path == "usr/lib64/ld-linux-x86-64.so.2":
+				modeLines = append(modeLines, "\nroot/"+e.Path+" Lrwxrwxrwx -> "+e.Target+"\n")
+			}
+		}
+		if len(modeLines) < 2 {
+			t.Fatalf("fixture %s: want explicit shell and loader modes, got %q", fx.Name, modeLines)
+		}
+		t.Run(fx.Name, func(t *testing.T) {
+			sandbox := t.TempDir()
+			root, err := pt.BuildFixture(sandbox, fx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := pt.Digest(sandbox)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range modeLines {
+				if !strings.Contains("\n"+before+"\n", line) {
+					t.Fatalf("manifest lacks mode line %q:\n%s", line, before)
+				}
+			}
+			got := runBothModes(t, bin, root, fx.Findings)
+			gotD := []string{}
+			for _, f := range got {
+				gotD = append(gotD, f.Detail)
+			}
+			if !reflect.DeepEqual(gotD, append([]string{}, want...)) {
+				t.Errorf("details = %q; want %q", gotD, want)
+			}
+			if after, err := pt.Digest(sandbox); err != nil || after != before {
+				t.Errorf("manifest changed (%v):\nbefore:\n%s\nafter:\n%s", err, before, after)
+			}
+			for _, args := range [][]string{{"check", root}, {"check", "--json", root}} {
+				runBinary(t, bin, args...)
+				if after, err := pt.Digest(sandbox); err != nil || after != before {
+					t.Errorf("%q: manifest changed (%v):\nbefore:\n%s\nafter:\n%s", args, err, before, after)
+				}
+			}
+		})
+	}
+}
+
+// TestBinaryInterpNoExecUnreadable makes the non-executable loader of
+// interp_noexec_0644 mode 000: for a nonprivileged runner both modes report
+// exactly read_error at the PT_INTERP path with no permission finding, and
+// the sandbox (including the loader's lstat metadata) is unchanged.
+func TestBinaryInterpNoExecUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not deny root")
+	}
+	bin := buildBinary(t)
+	var fx pt.Fixture
+	for _, f := range pt.Catalog() {
+		if f.Name == "interp_noexec_0644" {
+			fx = f
+		}
+	}
+	if fx.Name == "" {
+		t.Fatal("interp_noexec_0644 not in Catalog()")
+	}
+	sandbox := t.TempDir()
+	root, err := pt.BuildFixture(sandbox, fx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(root, "usr/lib64/ld-linux-x86-64.so.2")
+	before, err := pt.Digest(sandbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(ld, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ld, 0o644) })
+	pre, err := os.Lstat(ld)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runBothModes(t, bin, root, []pt.FindingPair{{Code: "read_error", Path: pt.Loader}})
+	if len(got) == 1 && !strings.HasPrefix(got[0].Detail, "cannot read: ") {
+		t.Errorf("detail = %q; want \"cannot read: \" prefix", got[0].Detail)
+	}
+	post, err := os.Lstat(ld)
+	if err != nil || post.Mode() != pre.Mode() || post.Size() != pre.Size() || !post.ModTime().Equal(pre.ModTime()) {
+		t.Errorf("loader metadata changed: %v (%v); want %v", post, err, pre)
+	}
+	if err := os.Chmod(ld, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := pt.Digest(sandbox); err != nil || after != before {
+		t.Errorf("manifest changed (%v):\nbefore:\n%s\nafter:\n%s", err, before, after)
+	}
+}

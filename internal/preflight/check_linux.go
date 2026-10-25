@@ -302,6 +302,13 @@ func checkShell(rootfd int, r *Report) {
 		}
 		if prob := interpHeader(data); prob != nil {
 			r.add(prob.code, interp, prob.detail)
+		} else if ist.Mode&0o111 == 0 {
+			// Mode bits of the resolved regular interpreter, from the Fstat
+			// locate already made (ist, not the shell's st); not an
+			// effective-access check.
+			r.add("interp_not_executable", interp, fmt.Sprintf("resolves to a regular file with mode %04o; "+
+				"no owner, group or other execute bit is set (mode bits only; not a check of whether any user can run it)",
+				ist.Mode&0o7777))
 		}
 	}
 }

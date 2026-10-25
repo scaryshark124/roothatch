@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -233,5 +234,45 @@ func TestCheckOutputFailure(t *testing.T) {
 		if !strings.Contains(errOut.String(), "cannot write output") {
 			t.Errorf("%s: stderr = %q", name, errOut.String())
 		}
+	}
+}
+
+// TestHelpDocumentsInterpExec: help names the interpreter mode-bit finding
+// and its limited meaning, and keeps the implemented-command sentence.
+func TestHelpDocumentsInterpExec(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"help"}, &out, &errOut, "v"); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, s := range []string{"interp_not_executable", "shell_not_executable", "mode bits only"} {
+		if !strings.Contains(out.String(), s) {
+			t.Errorf("help lacks %q:\n%s", s, out.String())
+		}
+	}
+}
+
+// TestCheckInterpNoExecLines pins the exact text finding lines for a
+// non-executable shell and loader through the real command path.
+func TestCheckInterpNoExecLines(t *testing.T) {
+	var fx pt.Fixture
+	for _, f := range pt.Catalog() {
+		if f.Name == "interp_noexec_shell_noexec" {
+			fx = f
+		}
+	}
+	if fx.Name == "" {
+		t.Fatal("interp_noexec_shell_noexec not in Catalog()")
+	}
+	_, root := fixtureRoot(t, fx)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"check", root}, &out, &errOut, "v"); code != 3 || errOut.Len() != 0 {
+		t.Fatalf("exit = %d stderr %q; want 3 and empty", code, errOut.String())
+	}
+	detail := ": resolves to a regular file with mode 0644; no owner, group or other execute bit is set " +
+		"(mode bits only; not a check of whether any user can run it)"
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	want := []string{"shell_not_executable: /bin/sh" + detail, "interp_not_executable: " + pt.Loader + detail}
+	if len(lines) != 3 || !reflect.DeepEqual(lines[:2], want) || !strings.HasPrefix(lines[2], "FAIL: ") {
+		t.Errorf("stdout lines = %q; want %q then FAIL", lines, want)
 	}
 }
