@@ -26,7 +26,10 @@ healthy. `check --json <dir>` writes the same report as one JSON document
 `/bin/sh` and interpreter checks for trees without boot files: the independent
 `/boot` kernel/initrd and `/vmlinuz`/`/initrd.img` checks are skipped, although
 `/bin/sh` or its interpreter may still resolve beneath `/boot`; its `result`
-covers only those checks. There is no working chroot, mount,
+covers only those checks. A `--` argument ends `check`'s options
+(`check [--json] [--shell-only] -- <dir>`), so the single argument after it is
+always the directory, even when it begins with `-`; bare `check --` and
+`check --json --` are usage errors. There is no working chroot, mount,
 bootstrap, repair, image, or VM backend yet.
 Do not run this project as root or use it to repair an actual installation.
 

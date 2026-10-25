@@ -13,7 +13,10 @@ report as text or, for `check --json <dir>`, as a schema_version 1 JSON document
 admission with `Check` but selects only the shell/interpreter phase, so the
 independent `/boot` and shortcut-link phases never run (the shell or its
 interpreter may still resolve beneath `/boot`); its text and JSON describe only
-that phase.
+that phase. When a `check` argument is exactly `--`, `internal/cli` parses only
+`--json`/`--shell-only` before the first one and takes the single argument after
+it literally as the directory; without `--` the earlier argument parser runs
+unchanged. Both paths call the same checker and renderers.
 The following are proposed component boundaries, not delivered implementations.
 
 ## One target, two execution modes

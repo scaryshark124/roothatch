@@ -66,6 +66,16 @@
   says those boot files were not checked, and its schema_version 1 JSON
   `result` covers only the checks requested. Default `check` output is
   unchanged.
+- `check` now accepts `--` to end its options:
+  `roothatch check [--json] [--shell-only] -- <dir>`. Only `--json` and
+  `--shell-only` may precede the first `--` (each at most once, either order),
+  and exactly one argument must follow it; that argument is the directory,
+  taken literally, so `check -- --json` checks a directory named `--json` in
+  text mode and `check -- --shell-only` runs the full check on a directory
+  named `--shell-only`. Forms without `--` keep their previous behavior and
+  messages. Compatibility change: bare `check --` and `check --json --`
+  previously checked a directory named `--` and are now usage errors (exit 2);
+  use `check -- --` or `check ./--` instead.
 
 - Selected Apache-2.0, included LICENSE/NOTICE and bound the actual GitHub module.
 - Approved project guidance and Roothatch-specific role bindings; verified native

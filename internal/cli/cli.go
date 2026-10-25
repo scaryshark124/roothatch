@@ -17,6 +17,7 @@ Usage: roothatch [help|version]
        roothatch check --json <dir>
        roothatch check --shell-only <dir>
        roothatch check --json --shell-only <dir>
+       roothatch check [--json] [--shell-only] -- <dir>
 
 check inspects the Linux root tree at <dir> read-only and without privileges.
 It checks only that /bin/sh resolves inside <dir>, is an ELF64 little-endian
@@ -56,6 +57,17 @@ its PASS line says /boot, /vmlinuz and /initrd.img were not checked. With
 --json (before or after --shell-only; both flags before <dir>, each at most
 once) it writes the same schema_version 1 document; its "result" covers
 only the checks requested.
+
+A "--" argument ends check's options, so a directory whose name begins with
+"-" can be checked: roothatch check [--json] [--shell-only] -- <dir>. Only
+--json and --shell-only may come before the first "--", each at most once, in
+either order; anything else there is a usage error. Exactly one argument must
+follow it, and that argument is the directory, taken literally even when it
+looks like an option: "check -- --json" checks the directory "--json" in text
+mode, and "check -- --shell-only" runs the full check on the directory
+"--shell-only". "--" must not be repeated as a delimiter; a directory named
+"--" is checked with roothatch check -- -- or roothatch check ./--. A bare
+"check --" or "check --json --" names no directory and is a usage error.
 
 Help, version and check are the only implemented commands in this pre-alpha.
 Native entry, repair, image management and VM boot are not implemented.
@@ -136,11 +148,21 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	return writeText(report, stdout, stderr)
 }
 
+// endOfOptions is the argument that ends check's options.
+const endOfOptions = "--"
+
 // parseCheckArgs accepts only "check <dir>", "check --json <dir>",
 // "check --shell-only <dir>" and "check --json --shell-only <dir>" in either
 // flag order. Without --shell-only it keeps the previous parser and messages
-// exactly. It writes an explanation to stderr when it rejects the arguments.
+// exactly. When any argument is exactly "--", parseDelimitedCheckArgs
+// handles the arguments instead. It writes an explanation to stderr when it
+// rejects the arguments.
 func parseCheckArgs(args []string, stderr io.Writer) (dir string, asJSON, shellOnly, ok bool) {
+	for i, a := range args {
+		if a == endOfOptions {
+			return parseDelimitedCheckArgs(args[:i], args[i+1:], stderr)
+		}
+	}
 	for _, a := range args {
 		if a == shellOnlyFlag {
 			shellOnly = true
@@ -192,6 +214,37 @@ func parseCheckArgs(args []string, stderr io.Writer) (dir string, asJSON, shellO
 		return "", false, false, false
 	}
 	return rest[0], asJSON, true, true
+}
+
+// parseDelimitedCheckArgs parses "check [--json] [--shell-only] -- <dir>",
+// split at the first "--": opts may hold only --json and --shell-only, each
+// at most once and in either order, and operands must be exactly one
+// argument, which is the directory taken literally and never inspected as
+// an option.
+func parseDelimitedCheckArgs(opts, operands []string, stderr io.Writer) (dir string, asJSON, shellOnly, ok bool) {
+	const form = "roothatch check [--json] [--shell-only] -- <dir>"
+	for _, a := range opts {
+		switch {
+		case (a == "--json" && asJSON) || (a == shellOnlyFlag && shellOnly):
+			fmt.Fprintf(stderr, "roothatch: check: %s given more than once before --; usage: %s\n", a, form)
+			return "", false, false, false
+		case a == "--json":
+			asJSON = true
+		case a == shellOnlyFlag:
+			shellOnly = true
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(stderr, "roothatch: check: unknown flag %q before --; usage: %s\n", a, form)
+			return "", false, false, false
+		default:
+			fmt.Fprintf(stderr, "roothatch: check: the directory %q must come after --, not before it; usage: %s\n", a, form)
+			return "", false, false, false
+		}
+	}
+	if len(operands) != 1 {
+		fmt.Fprintf(stderr, "roothatch: check requires exactly one directory after --; usage: %s\n", form)
+		return "", false, false, false
+	}
+	return operands[0], asJSON, shellOnly, true
 }
 
 // writeJSON serializes report as one JSON document, preserving finding order

@@ -120,6 +120,16 @@ output byte-identical to the previous release on 117 synthetic roots;
 shell-only findings equal to the previous release's own shell check called
 directly on the same roots; see the [RH-M12 receipt](receipts/RH-M12-SHELL-ONLY.md).
 
+RH-M13 lets `--` end `check`'s options: `roothatch check [--json] [--shell-only]
+-- <dir>`. Only the first exact `--` is the delimiter, and the single argument
+after it is always the directory, so a directory named like an option can be
+checked without `./`. Without `--`, parsing is unchanged. Bare `check --` and
+`check --json --` are now usage errors instead of checking a directory named
+`--` (use `check -- --`). Proof: independent functional review (round 1 PASS)
+and parent comparison with the previous release on 117 synthetic roots
+in every output mode, plus option-named directories; see the
+[RH-M13 receipt](receipts/RH-M13-END-OF-OPTIONS.md).
+
 Implemented commands are `help`, `version` and `check` (with `--json` and `--shell-only`). Native entry, doctor,
 bootstrap, storage and VM functionality are not delivered. RH-M2-01 stays
 unchecked: `check` covers its synthetic-root diagnostics, but the row remains open
